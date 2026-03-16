@@ -20,7 +20,7 @@ def keep_alive():
     t.start()
 # --------------------------------------------------
 
-BOT_TOKEN = "ENTER_YOUR_TOKEN" # Apna asli token yahan dalein
+BOT_TOKEN = "8616498366:AAFArnjNJ24ZnQTcNRNBCCoeoUP3aDRu9WQ" # Apna asli token yahan dalein
 OWNER_NAME = "@ankitraj444"
 API_URL = "https://like-api-2-zy52.vercel.app/like"
 ALLOWED_GROUP = -1002316321534 
