@@ -3,10 +3,11 @@ import asyncio
 import os
 from flask import Flask
 from threading import Thread
+from github import Github
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
-# --- RENDER DUMMY SERVER (Ise delete mat karna) ---
+# --- RENDER DUMMY SERVER ---
 app = Flask('')
 @app.route('/')
 def home():
@@ -20,18 +21,22 @@ def keep_alive():
     t.start()
 # --------------------------------------------------
 
-BOT_TOKEN = "8616498366:AAFArnjNJ24ZnQTcNRNBCCoeoUP3aDRu9WQ" # Apna asli token yahan dalein
+# Tokens (Render Environment Variables se uthayega)
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+G_TOKEN = os.environ.get("G_TOKEN") 
+REPO_NAME = "jjppjjpp0099-ux/Like-api-2"
+
 OWNER_NAME = "@ankitraj444"
 API_URL = "https://like-api-2-zy52.vercel.app/like"
 ALLOWED_GROUP = -1002316321534 
 
+# --- UTILS ---
 def small_caps(text: str) -> str:
     normal = "abcdefghijklmnopqrstuvwxyz"
     small = "ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀsᴛᴜᴠᴡxʏᴢ"
     return text.lower().translate(str.maketrans(normal, small))
 
 async def send_styled(update: Update, text: str):
-    # Safe message sending without reply-to dependency
     await update.effective_chat.send_message(small_caps(text))
 
 async def private_message(update: Update):
@@ -45,6 +50,56 @@ async def private_message(update: Update):
         reply_markup=reply_markup
     )
 
+# --- NAYA GITHUB UPDATE LOGIC ---
+async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Security: Sirf aapka username hi ise use kar sake (Taki group me koi aur na kare)
+    if update.effective_user.username != "ankitraj444": 
+        await update.message.reply_text("❌ Only the bot owner can update files.")
+        return
+        
+    context.user_data['waiting_for_json'] = True
+    await update.message.reply_text("📤 Okay! Ab koi bhi `.json` file bhejiye. Iska code dono GitHub files mein paste ho jayega.")
+
+async def handle_json_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get('waiting_for_json'):
+        return
+
+    doc = update.message.document
+    if not doc or not doc.file_name.endswith('.json'):
+        await update.message.reply_text("❌ Please send a valid `.json` file.")
+        return
+    
+    status_msg = await update.message.reply_text(f"⏳ Reading `{doc.file_name}` and updating GitHub...")
+    
+    try:
+        # 1. Jo file aapne bheji uska content download karna
+        tg_file = await context.bot.get_file(doc.file_id)
+        new_content_bytes = await tg_file.download_as_bytearray()
+        new_content = bytes(new_content_bytes)
+
+        # 2. GitHub Connection
+        g = Github(G_TOKEN)
+        repo = g.get_repo(REPO_NAME)
+        
+        # In dono files mein aapka naya code paste hoga
+        files_to_update = ["token_ind.json", "token_ind_visit.json"]
+        
+        for file_name in files_to_update:
+            contents = repo.get_contents(file_name)
+            repo.update_file(
+                contents.path, 
+                f"Sync update from {doc.file_name}", 
+                new_content, 
+                contents.sha
+            )
+        
+        await status_msg.edit_text(f"✅ Success! Content of `{doc.file_name}` pasted into `token_ind.json` & `token_ind_visit.json`.")
+        context.user_data['waiting_for_json'] = False
+
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Error: {str(e)}")
+
+# --- PURANE COMMANDS (LIKE, START, HELP) ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != ALLOWED_GROUP:
         await private_message(update)
@@ -59,7 +114,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != ALLOWED_GROUP:
         await private_message(update)
         return
-    msg = ("📖 HELP MENU\n\n✅ /start - Bot start\n✅ /like region uid - Free Fire likes\n\n"
+    msg = ("📖 HELP MENU\n\n✅ /start - Bot start\n✅ /like region uid - Free Fire likes\n✅ /update - Update JSON files\n\n"
            f"👑 Owner: {OWNER_NAME}")
     await send_styled(update, msg)
 
@@ -95,16 +150,19 @@ async def like_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_styled(update, "api error aa gaya 😵")
 
 def main():
-    # Start the dummy web server first
     keep_alive()
-    
-    # Start the Telegram Bot
     app_tele = ApplicationBuilder().token(BOT_TOKEN).build()
+    
+    # Purane Handlers
     app_tele.add_handler(CommandHandler("start", start_command))
     app_tele.add_handler(CommandHandler("help", help_command))
     app_tele.add_handler(CommandHandler("like", like_command))
     
-    print("Bot is running with keep-alive...")
+    # Naye GitHub Handlers
+    app_tele.add_handler(CommandHandler("update", update_command))
+    app_tele.add_handler(MessageHandler(filters.Document.ALL, handle_json_file))
+    
+    print("Bot is running with Multi-File Update feature...")
     app_tele.run_polling()
 
 if __name__ == "__main__":
