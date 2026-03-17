@@ -1,6 +1,7 @@
 import aiohttp
 import asyncio
 import os
+import requests  # Naya import auto-deploy ke liye
 from flask import Flask
 from threading import Thread
 from github import Github
@@ -14,17 +15,22 @@ def home():
     return "Bot is Alive!"
 
 def run_web():
-    app.run(host='0.0.0.0', port=10000)
+    # Render default port 10000 use karta hai
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
     t = Thread(target=run_web)
+    t.daemon = True
     t.start()
 # --------------------------------------------------
 
 # Tokens (Render Environment Variables se uthayega)
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 G_TOKEN = os.environ.get("G_TOKEN") 
 REPO_NAME = "jjppjjpp0099-ux/Like-api-2"
+RENDER_HOOK = os.environ.get("RENDER_DEPLOY_HOOK") # Render settings se copy karke Env me dalein
+ADMIN_ID = os.environ.get("ADMIN_ID") # Apni numerical ID Env me dalein
 
 OWNER_NAME = "@ankitraj444"
 API_URL = "https://like-api-2-zy52.vercel.app/like"
@@ -50,15 +56,22 @@ async def private_message(update: Update):
         reply_markup=reply_markup
     )
 
-# --- NAYA GITHUB UPDATE LOGIC ---
+# --- GITHUB UPDATE LOGIC ---
 async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Security: Sirf aapka username hi ise use kar sake (Taki group me koi aur na kare)
-    if update.effective_user.username != "ankitraj444": 
+    user = update.effective_user
+    # Security: Username ya ID dono me se koi bhi match ho jaye
+    is_owner = False
+    if user.username == "ankitraj444":
+        is_owner = True
+    elif ADMIN_ID and str(user.id) == str(ADMIN_ID):
+        is_owner = True
+
+    if not is_owner:
         await update.message.reply_text("❌ Only the bot owner can update files.")
         return
         
     context.user_data['waiting_for_json'] = True
-    await update.message.reply_text("📤 Okay! Ab koi bhi `.json` file bhejiye. Iska code dono GitHub files mein paste ho jayega.")
+    await update.message.reply_text("📤 Okay Boss! Ab `.json` file bhejiye, main GitHub update karke Render restart kar dunga.")
 
 async def handle_json_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get('waiting_for_json'):
@@ -72,16 +85,13 @@ async def handle_json_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await update.message.reply_text(f"⏳ Reading `{doc.file_name}` and updating GitHub...")
     
     try:
-        # 1. Jo file aapne bheji uska content download karna
         tg_file = await context.bot.get_file(doc.file_id)
         new_content_bytes = await tg_file.download_as_bytearray()
         new_content = bytes(new_content_bytes)
 
-        # 2. GitHub Connection
         g = Github(G_TOKEN)
         repo = g.get_repo(REPO_NAME)
         
-        # In dono files mein aapka naya code paste hoga
         files_to_update = ["token_ind.json", "token_ind_visit.json"]
         
         for file_name in files_to_update:
@@ -93,13 +103,19 @@ async def handle_json_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 contents.sha
             )
         
-        await status_msg.edit_text(f"✅ Success! Content of `{doc.file_name}` pasted into `token_ind.json` & `token_ind_visit.json`.")
+        # --- AUTO DEPLOY TRIGGER ---
+        deploy_info = ""
+        if RENDER_HOOK:
+            requests.get(RENDER_HOOK)
+            deploy_info = "\n\n🚀 **Render Auto-Deploy Triggered!** Bot 1 minute me restart ho jayega."
+
+        await status_msg.edit_text(f"✅ Success! GitHub Updated.{deploy_info}")
         context.user_data['waiting_for_json'] = False
 
     except Exception as e:
         await status_msg.edit_text(f"❌ Error: {str(e)}")
 
-# --- PURANE COMMANDS (LIKE, START, HELP) ---
+# --- LIKE, START, HELP ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != ALLOWED_GROUP:
         await private_message(update)
@@ -118,6 +134,53 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
            f"👑 Owner: {OWNER_NAME}")
     await send_styled(update, msg)
 
+async def like_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id != ALLOWED_GROUP:
+        await private_message(update)
+        return
+    if len(context.args) < 2:
+        await send_styled(update, "use: /like region uid\nexample: /like ind 123456789")
+        return
+
+    region, uid = context.args[0].lower(), context.args[1]
+    await send_styled(update, "fetching player data... ⏳")
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{API_URL}?uid={uid}&server_name={region}") as response:
+                data = await response.json()
+
+        if data.get("status") != 1:
+            await send_styled(update, "Try next day api error 😵")
+            return
+
+        name = data.get("PlayerNickname", "Unknown")
+        before = data.get("LikesbeforeCommand", 0)
+        after = data.get("LikesafterCommand", 0)
+        given = data.get("LikesGivenByAPI", 0)
+
+        msg = f"🔥 PLAYER PROFILE\n\n👤 Name : {name}\n🆔 UID : {uid}\n🌍 Region : {region}\n\n" \
+              f"👍 Before Likes : {before}\n❤️ Likes Given : +{given}\n🔥 After Likes : {after}"
+        await send_styled(update, msg)
+    except:
+        await send_styled(update, "api error aa gaya 😵")
+
+def main():
+    keep_alive()
+    app_tele = ApplicationBuilder().token(BOT_TOKEN).build()
+    
+    app_tele.add_handler(CommandHandler("start", start_command))
+    app_tele.add_handler(CommandHandler("help", help_command))
+    app_tele.add_handler(CommandHandler("like", like_command))
+    app_tele.add_handler(CommandHandler("update", update_command))
+    app_tele.add_handler(MessageHandler(filters.Document.ALL, handle_json_file))
+    
+    print("Bot is running...")
+    # drop_pending_updates=True conflict error ko fix karta hai
+    app_tele.run_polling(drop_pending_updates=True)
+
+if __name__ == "__main__":
+    main()
 async def like_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != ALLOWED_GROUP:
         await private_message(update)
