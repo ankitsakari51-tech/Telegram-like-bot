@@ -1,107 +1,85 @@
-import aiohttp
-import asyncio
-import os
+import aiohttp, os, asyncio
 from flask import Flask
 from threading import Thread
 from github import Github
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
-# --- 1. ANTI-SLEEP WEB SERVER ---
 app = Flask('')
 @app.route('/')
-def home(): return "Bot is Running 24/7!"
+def home(): return "Bot Live!"
 
-def run_web():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+def run(): app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
 
-def keep_alive():
-    t = Thread(target=run_web)
-    t.daemon = True
-    t.start()
+# Config
+B_TOKEN, G_TOKEN = os.environ.get("BOT_TOKEN"), os.environ.get("G_TOKEN")
+ADMIN_ID, REPO = os.environ.get("ADMIN_ID"), "jjppjjpp0099-ux/Like-api-2"
+API = "https://like-api-2-zy52.vercel.app/like"
+GRP = -1002316321534
 
-# --- 2. CONFIGURATION ---
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-G_TOKEN = os.environ.get("G_TOKEN") 
-REPO_NAME = "jjppjjpp0099-ux/Like-api-2"
-ADMIN_ID = os.environ.get("ADMIN_ID")
-OWNER_NAME = "@ankitraj444"
-API_URL = "https://like-api-2-zy52.vercel.app/like"
-ALLOWED_GROUP = -1002316321534 
+def sc(t):
+    n, s = "abcdefghijklmnopqrstuvwxyz0123456789", "ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀsᴛᴜᴠᴡxʏᴢ0123456789"
+    return t.lower().translate(str.maketrans(n, s))
 
-# --- 3. UTILS ---
-def small_caps(text: str) -> str:
-    normal = "abcdefghijklmnopqrstuvwxyz0123456789"
-    small = "ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀsᴛᴜᴠᴡxʏᴢ0123456789"
-    return text.lower().translate(str.maketrans(normal, small))
+async def is_o(u): return str(u.id) == str(ADMIN_ID) or u.username == "ankitraj444"
 
-async def is_owner(update: Update):
-    user = update.effective_user
-    return str(user.id) == str(ADMIN_ID) or user.username == "ankitraj444"
-
-# --- 4. COMMAND HANDLERS ---
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    user_first_name = update.effective_user.first_name
-    if chat.type == "private" and not await is_owner(update):
-        buttons = [[
-            InlineKeyboardButton("DM OWNER", url="https://t.me/ankitraj444"),
-            InlineKeyboardButton("LIKE GROUP", url="https://t.me/+pQxMtYP9OfxmZmE1")
-        ]]
-        await chat.send_message("⚠️ This bot is private. Use it only in the official group.", reply_markup=InlineKeyboardMarkup(buttons))
+async def start(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    chat, user = u.effective_chat, u.effective_user
+    if chat.type == "private" and not await is_o(user):
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("DM OWNER", url="https://t.me/ankitraj444"), InlineKeyboardButton("GROUP", url="https://t.me/+pQxMtYP9OfxmZmE1")]])
+        await chat.send_message("⚠️ Private Bot. Use in official group.", reply_markup=kb)
         return
-    
-    if chat.id != ALLOWED_GROUP and not await is_owner(update): return
-    msg = f"Hey! {user_first_name} nice to meet you 😊\n\n👑 owner: {OWNER_NAME}\n\n📌 Commands:\n/like region uid\n/help"
-    await chat.send_message(small_caps(msg))
+    if chat.id == GRP or await is_o(user):
+        await chat.send_message(sc(f"Hey {user.first_name}!\nOwner: @ankitraj444\nCommands: /like, /help"))
 
-async def like_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    user_first_name = update.effective_user.first_name
-    
-    if chat.type == "private" and not await is_owner(update):
-        buttons = [[InlineKeyboardButton("DM OWNER", url="https://t.me/ankitraj444"), InlineKeyboardButton("LIKE GROUP", url="https://t.me/+pQxMtYP9OfxmZmE1")]]
-        await chat.send_message("⚠️ This bot is private. Use it only in the official group.", reply_markup=InlineKeyboardMarkup(buttons))
+async def like(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    chat, user = u.effective_chat, u.effective_user
+    if (chat.type == "private" and not await is_o(user)) or (chat.id != GRP and not await is_o(user)): return
+    if len(c.args) < 2:
+        await chat.send_message(sc("use: /like region uid"))
         return
-
-    if chat.id != ALLOWED_GROUP and not await is_owner(update): return
-
-    if len(context.args) < 2:
-        await chat.send_message(small_caps("USE: /like region uid"))
-        return
-
-    region, uid = context.args[0].lower(), context.args[1]
-    status_msg = await chat.send_message(small_caps("FETCHING PLAYER DATA... ⏳"))
-
+    reg, uid = c.args[0].lower(), c.args[1]
+    msg = await chat.send_message(sc("FETCHING... ⏳"))
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f"{API_URL}?uid={uid}&server_name={region}") as response:
-                data = await response.json()
-
-        if data.get("status") != 1:
-            await status_msg.edit_text(small_caps("Try next day api error 😵"))
+        async with aiohttp.ClientSession() as ses:
+            async with ses.get(f"{API}?uid={uid}&server_name={reg}") as r:
+                d = await r.json()
+        if d.get("status") != 1:
+            await msg.edit_text(sc("API Error 😵"))
             return
+        res = (f"ᴄᴏɴɢʀᴀᴛᴜʟᴀᴛɪᴏɴs {user.first_name.upper()} 🎉\n\n"
+               f"👤 ɴᴀᴍᴇ : {d.get('PlayerNickname')}\n🆔 ᴜɪᴅ : {uid}\n🌍 ʀᴇɢɪᴏɴ : {reg.upper()}\n\n"
+               f"👍 ʙᴇꜰᴏʀᴇ : {d.get('LikesbeforeCommand')}\n❤️ ᴀᴅᴅᴇᴅ : +{d.get('LikesGivenByAPI')}\n🔥 ᴀꜰᴛᴇʀ : {d.get('LikesafterCommand')}")
+        await msg.edit_text(res)
+    except: await msg.edit_text(sc("Error 😵"))
 
-        # Format updated as per your requirement
-        final_msg = (
-            f"ᴄᴏɴɢʀᴀᴛᴜʟᴀᴛɪᴏɴs {user_first_name.upper()} 🎉\n\n"
-            f"👤 ɴᴀᴍᴇ : {data.get('PlayerNickname')}\n"
-            f"🆔 ᴜɪᴅ : {uid}\n"
-            f"🌍 ʀᴇɢɪᴏɴ : {region.upper()}\n\n"
-            f"👍 ʙᴇꜰᴏʀᴇ ʟɪᴋᴇs : {data.get('LikesbeforeCommand')}\n"
-            f"❤️ ʟɪᴋᴇs ɢɪᴠᴇɴ : +{data.get('LikesGivenByAPI')}\n"
-            f"🔥 ᴀꜰᴛᴇʀ ʟɪᴋᴇs : {data.get('LikesafterCommand')}"
-        )
-        await status_msg.edit_text(final_msg)
-    except:
-        await status_msg.edit_text(small_caps("api error aa gaya 😵"))
+async def up(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    if await is_o(u.effective_user):
+        c.user_data['u'] = True
+        await u.effective_chat.send_message("📤 Send .json")
 
-async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_owner(update): return
-    context.user_data['waiting_for_json'] = True
-    await update.effective_chat.send_message("📤 Okay Boss! Ab `.json` file bhejiye.")
+async def doc(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    if c.user_data.get('u') and await is_o(u.effective_user):
+        d = u.message.document
+        if d and d.file_name.endswith('.json'):
+            m = await u.effective_chat.send_message("⏳ Updating...")
+            f = await c.bot.get_file(d.file_id)
+            b = await f.download_as_bytearray()
+            r = Github(G_TOKEN).get_repo(REPO)
+            for p in ["token_ind.json", "token_ind_visit.json"]:
+                repo_f = r.get_contents(p)
+                r.update_file(repo_f.path, "Update", bytes(b), repo_f.sha)
+            await m.edit_text("✅ Done!")
+            c.user_data['u'] = False
 
+if __name__ == "__main__":
+    Thread(target=run, daemon=True).start()
+    bot = ApplicationBuilder().token(B_TOKEN).build()
+    bot.add_handler(CommandHandler("start", start))
+    bot.add_handler(CommandHandler("like", like))
+    bot.add_handler(CommandHandler("update", up))
+    bot.add_handler(MessageHandler(filters.Document.ALL, doc))
+    bot.run_polling(drop_pending_updates=True)
 async def handle_json_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get('waiting_for_json') or not await is_owner(update): return
     doc = update.message.document
