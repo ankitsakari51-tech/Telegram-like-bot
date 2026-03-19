@@ -83,7 +83,7 @@ async def like_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await status_msg.edit_text(small_caps("Try next day api error 😵"))
             return
 
-        # Yahan Header mein User Name add kiya gaya hai
+        # Format updated as per your requirement
         final_msg = (
             f"ᴄᴏɴɢʀᴀᴛᴜʟᴀᴛɪᴏɴs {user_first_name.upper()} 🎉\n\n"
             f"👤 ɴᴀᴍᴇ : {data.get('PlayerNickname')}\n"
@@ -102,6 +102,36 @@ async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['waiting_for_json'] = True
     await update.effective_chat.send_message("📤 Okay Boss! Ab `.json` file bhejiye.")
 
+async def handle_json_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get('waiting_for_json') or not await is_owner(update): return
+    doc = update.message.document
+    if not doc or not doc.file_name.endswith('.json'): return
+    
+    status = await update.effective_chat.send_message("⏳ Updating GitHub...")
+    try:
+        tg_file = await context.bot.get_file(doc.file_id)
+        new_content = await tg_file.download_as_bytearray()
+        g = Github(G_TOKEN)
+        repo = g.get_repo(REPO_NAME)
+        for f in ["token_ind.json", "token_ind_visit.json"]:
+            c = repo.get_contents(f)
+            repo.update_file(c.path, "Auto-update", bytes(new_content), c.sha)
+        await status.edit_text("✅ Success! GitHub Updated.")
+        context.user_data['waiting_for_json'] = False
+    except Exception as e:
+        await status.edit_text(f"❌ Error: {str(e)}")
+
+def main():
+    keep_alive()
+    app_bot = ApplicationBuilder().token(BOT_TOKEN).build()
+    app_bot.add_handler(CommandHandler("start", start_command))
+    app_bot.add_handler(CommandHandler("like", like_command))
+    app_bot.add_handler(CommandHandler("update", update_command))
+    app_bot.add_handler(MessageHandler(filters.Document.ALL, handle_json_file))
+    app_bot.run_polling(drop_pending_updates=True)
+
+if __name__ == "__main__":
+    main()
 async def handle_json_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get('waiting_for_json') or not await is_owner(update): return
     doc = update.message.document
