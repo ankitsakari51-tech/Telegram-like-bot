@@ -7,15 +7,13 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, Messa
 
 app = Flask('')
 @app.route('/')
-def home(): return "Bot Live!"
+def home(): return "Live"
 
 def run(): app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
 
-# Config
 B_TOKEN, G_TOKEN = os.environ.get("BOT_TOKEN"), os.environ.get("G_TOKEN")
 ADMIN_ID, REPO = os.environ.get("ADMIN_ID"), "jjppjjpp0099-ux/Like-api-2"
-API = "https://like-api-2-zy52.vercel.app/like"
-GRP = -1002316321534
+API, GRP = "https://like-api-2-zy52.vercel.app/like", -1002316321534
 
 def sc(t):
     n, s = "abcdefghijklmnopqrstuvwxyz0123456789", "ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀsᴛᴜᴠᴡxʏᴢ0123456789"
@@ -28,8 +26,7 @@ async def start(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if chat.type == "private" and not await is_o(user):
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("DM OWNER", url="https://t.me/ankitraj444"), InlineKeyboardButton("GROUP", url="https://t.me/+pQxMtYP9OfxmZmE1")]])
         await chat.send_message("⚠️ Private Bot. Use in official group.", reply_markup=kb)
-        return
-    if chat.id == GRP or await is_o(user):
+    elif chat.id == GRP or await is_o(user):
         await chat.send_message(sc(f"Hey {user.first_name}!\nOwner: @ankitraj444\nCommands: /like, /help"))
 
 async def like(u: Update, c: ContextTypes.DEFAULT_TYPE):
@@ -42,8 +39,7 @@ async def like(u: Update, c: ContextTypes.DEFAULT_TYPE):
     msg = await chat.send_message(sc("FETCHING... ⏳"))
     try:
         async with aiohttp.ClientSession() as ses:
-            async with ses.get(f"{API}?uid={uid}&server_name={reg}") as r:
-                d = await r.json()
+            async with ses.get(f"{API}?uid={uid}&server_name={reg}") as r: d = await r.json()
         if d.get("status") != 1:
             await msg.edit_text(sc("API Error 😵"))
             return
@@ -67,8 +63,8 @@ async def doc(u: Update, c: ContextTypes.DEFAULT_TYPE):
             b = await f.download_as_bytearray()
             r = Github(G_TOKEN).get_repo(REPO)
             for p in ["token_ind.json", "token_ind_visit.json"]:
-                repo_f = r.get_contents(p)
-                r.update_file(repo_f.path, "Update", bytes(b), repo_f.sha)
+                rf = r.get_contents(p)
+                r.update_file(rf.path, "Update", bytes(b), rf.sha)
             await m.edit_text("✅ Done!")
             c.user_data['u'] = False
 
@@ -80,28 +76,6 @@ if __name__ == "__main__":
     bot.add_handler(CommandHandler("update", up))
     bot.add_handler(MessageHandler(filters.Document.ALL, doc))
     bot.run_polling(drop_pending_updates=True)
-async def handle_json_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.user_data.get('waiting_for_json') or not await is_owner(update): return
-    doc = update.message.document
-    if not doc or not doc.file_name.endswith('.json'): return
-    
-    status = await update.effective_chat.send_message("⏳ Updating GitHub...")
-    try:
-        tg_file = await context.bot.get_file(doc.file_id)
-        new_content = await tg_file.download_as_bytearray()
-        g = Github(G_TOKEN)
-        repo = g.get_repo(REPO_NAME)
-        for f in ["token_ind.json", "token_ind_visit.json"]:
-            c = repo.get_contents(f)
-            repo.update_file(c.path, "Auto-update", bytes(new_content), c.sha)
-        await status.edit_text("✅ Success! GitHub Updated.")
-        context.user_data['waiting_for_json'] = False
-    except Exception as e:
-        await status.edit_text(f"❌ Error: {str(e)}")
-
-def main():
-    keep_alive()
-    app_bot = ApplicationBuilder().token(BOT_TOKEN).build()
     app_bot.add_handler(CommandHandler("start", start_command))
     app_bot.add_handler(CommandHandler("like", like_command))
     app_bot.add_handler(CommandHandler("update", update_command))
