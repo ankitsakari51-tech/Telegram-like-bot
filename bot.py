@@ -10,8 +10,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, Messa
 # --- 1. ANTI-SLEEP WEB SERVER ---
 app = Flask('')
 @app.route('/')
-def home():
-    return "Bot is Running 24/7!"
+def home(): return "Bot is Running 24/7!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -27,7 +26,6 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 G_TOKEN = os.environ.get("G_TOKEN") 
 REPO_NAME = "jjppjjpp0099-ux/Like-api-2"
 ADMIN_ID = os.environ.get("ADMIN_ID")
-
 OWNER_NAME = "@ankitraj444"
 API_URL = "https://like-api-2-zy52.vercel.app/like"
 ALLOWED_GROUP = -1002316321534 
@@ -45,37 +43,35 @@ async def is_owner(update: Update):
 # --- 4. COMMAND HANDLERS ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
-    is_admin = await is_owner(update)
-
-    if chat.type == "private" and not is_admin:
+    user_first_name = update.effective_user.first_name
+    if chat.type == "private" and not await is_owner(update):
         buttons = [[
             InlineKeyboardButton("DM OWNER", url="https://t.me/ankitraj444"),
             InlineKeyboardButton("LIKE GROUP", url="https://t.me/+pQxMtYP9OfxmZmE1")
         ]]
         await chat.send_message("⚠️ This bot is private. Use it only in the official group.", reply_markup=InlineKeyboardMarkup(buttons))
         return
-
-    if chat.id != ALLOWED_GROUP and not is_admin: return
-
-    msg = f"Hey! {update.effective_user.first_name} nice to meet you 😊\n\n👑 owner: {OWNER_NAME}\n\n📌 Commands:\n/like region uid\n/help"
+    
+    if chat.id != ALLOWED_GROUP and not await is_owner(update): return
+    msg = f"Hey! {user_first_name} nice to meet you 😊\n\n👑 owner: {OWNER_NAME}\n\n📌 Commands:\n/like region uid\n/help"
     await chat.send_message(small_caps(msg))
 
 async def like_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
-    is_admin = await is_owner(update)
-
-    if chat.type == "private" and not is_admin:
-        # Private DM error message logic (wahi buttons wala)
+    user_first_name = update.effective_user.first_name
+    
+    if chat.type == "private" and not await is_owner(update):
+        buttons = [[InlineKeyboardButton("DM OWNER", url="https://t.me/ankitraj444"), InlineKeyboardButton("LIKE GROUP", url="https://t.me/+pQxMtYP9OfxmZmE1")]]
+        await chat.send_message("⚠️ This bot is private. Use it only in the official group.", reply_markup=InlineKeyboardMarkup(buttons))
         return
 
-    if chat.id != ALLOWED_GROUP and not is_admin: return
+    if chat.id != ALLOWED_GROUP and not await is_owner(update): return
 
     if len(context.args) < 2:
-        await chat.send_message(small_caps("use: /like region uid"))
+        await chat.send_message(small_caps("USE: /like region uid"))
         return
 
     region, uid = context.args[0].lower(), context.args[1]
-    # No reply, direct message
     status_msg = await chat.send_message(small_caps("FETCHING PLAYER DATA... ⏳"))
 
     try:
@@ -87,21 +83,54 @@ async def like_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await status_msg.edit_text(small_caps("Try next day api error 😵"))
             return
 
-        name = data.get("PlayerNickname")
-        before = data.get("LikesbeforeCommand")
-        given = data.get("LikesGivenByAPI")
-        after = data.get("LikesafterCommand")
-        
-        # Exact format as per your screenshot
+        # Yahan Header mein User Name add kiya gaya hai
         final_msg = (
-            "🔥 ᴘʟᴀʏᴇʀ ᴘʀᴏꜰɪʟᴇ\n\n"
-            f"👤 ɴᴀᴍᴇ : {name}\n"
+            f"ᴄᴏɴɢʀᴀᴛᴜʟᴀᴛɪᴏɴs {user_first_name.upper()} 🎉\n\n"
+            f"👤 ɴᴀᴍᴇ : {data.get('PlayerNickname')}\n"
             f"🆔 ᴜɪᴅ : {uid}\n"
             f"🌍 ʀᴇɢɪᴏɴ : {region.upper()}\n\n"
-            f"👍 ʙᴇꜰᴏʀᴇ ʟɪᴋᴇs : {before}\n"
-            f"❤️ ʟɪᴋᴇs ɢɪᴠᴇɴ : +{given}\n"
-            f"🔥 ᴀꜰᴛᴇʀ ʟɪᴋᴇs : {after}"
+            f"👍 ʙᴇꜰᴏʀᴇ ʟɪᴋᴇs : {data.get('LikesbeforeCommand')}\n"
+            f"❤️ ʟɪᴋᴇs ɢɪᴠᴇɴ : +{data.get('LikesGivenByAPI')}\n"
+            f"🔥 ᴀꜰᴛᴇʀ ʟɪᴋᴇs : {data.get('LikesafterCommand')}"
         )
+        await status_msg.edit_text(final_msg)
+    except:
+        await status_msg.edit_text(small_caps("api error aa gaya 😵"))
+
+async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_owner(update): return
+    context.user_data['waiting_for_json'] = True
+    await update.effective_chat.send_message("📤 Okay Boss! Ab `.json` file bhejiye.")
+
+async def handle_json_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get('waiting_for_json') or not await is_owner(update): return
+    doc = update.message.document
+    if not doc or not doc.file_name.endswith('.json'): return
+    
+    status = await update.effective_chat.send_message("⏳ Updating GitHub...")
+    try:
+        tg_file = await context.bot.get_file(doc.file_id)
+        new_content = await tg_file.download_as_bytearray()
+        g = Github(G_TOKEN)
+        repo = g.get_repo(REPO_NAME)
+        for f in ["token_ind.json", "token_ind_visit.json"]:
+            c = repo.get_contents(f)
+            repo.update_file(c.path, "Auto-update", bytes(new_content), c.sha)
+        await status.edit_text("✅ Success! GitHub Updated.")
+        context.user_data['waiting_for_json'] = False
+    except Exception as e:
+        await status.edit_text(f"❌ Error: {str(e)}")
+
+def main():
+    keep_alive()
+    app_bot = ApplicationBuilder().token(BOT_TOKEN).build()
+    app_bot.add_handler(CommandHandler("start", start_command))
+    app_bot.add_handler(CommandHandler("like", like_command))
+    app_bot.add_handler(CommandHandler("update", update_command))
+    app_bot.add_handler(MessageHandler(filters.Document.ALL, handle_json_file))
+    app_bot.run_polling(drop_pending_updates=True)
+
+if __name__ == "__main__": main()
         await status_msg.edit_text(final_msg)
     except:
         await status_msg.edit_text(small_caps("api error aa gaya 😵"))
