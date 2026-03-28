@@ -84,7 +84,7 @@ async def like(u: Update, c: ContextTypes.DEFAULT_TYPE):
             f"│🌍 ʀᴇɢɪᴏɴ: {reg.upper()}\n"
             f"╰━━━━━━━━━━━━━━━✪\n\n"
             f"╭━⟮ ✦ ʟɪᴋᴇ ᴅᴇᴛᴀɪʟꜱ ✦ ⟯\n"
-            f"│👍 ʟɪᴋᴇs ʙᴇꜰᴏʀᴇ: {l_before}\n"
+            f"│👍 ʟɪᴋᴇs ʙᴇꜰᴏʀᴇ:  {l_before}\n"
             f"│❤️ ʟɪᴋᴇs ᴀꜰᴛᴇʀ:    {l_after}\n"
             f"│➕ ʟɪᴋᴇs ɢɪᴠᴇɴ:   +{l_added}\n"
             f"╰━━━━━━━━━━━━━━━✪"
