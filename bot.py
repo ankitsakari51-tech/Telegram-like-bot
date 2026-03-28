@@ -58,7 +58,7 @@ async def like(u: Update, c: ContextTypes.DEFAULT_TYPE):
                 d = await r.json()
         
         if d.get("status") != 1:
-            await msg.edit_text(sc("API Error 😵"))
+            await msg.edit_text(sc("try next time 😵"))
             return
             
         res = (f"ᴄᴏɴɢʀᴀᴛᴜʟᴀᴛɪᴏɴs {user.first_name.upper()} 🎉\n\n"
