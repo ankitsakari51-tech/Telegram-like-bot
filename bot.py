@@ -73,7 +73,7 @@ async def like(u: Update, c: ContextTypes.DEFAULT_TYPE):
         l_after = d.get('LikesafterCommand', '0')
 
         res = (
-            f"     ʜᴇʏ {fname} !!\n"
+            f"ㅤㅤㅤ!! ʜᴇʏ {fname} !!\n"
             f"✪━━━━━━━━━━━━━━━✪\n"
             f"╭💝\n"
             f"│ꜱᴜᴄᴄᴇssꜰᴜʟʟʏ ʟɪᴋᴇ ꜱᴇɴᴛ\n"
