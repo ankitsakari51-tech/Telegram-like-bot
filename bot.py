@@ -61,13 +61,24 @@ async def like(u: Update, c: ContextTypes.DEFAULT_TYPE):
             await msg.edit_text(sc("try next time 😵"))
             return
             
-        res = (f"ᴄᴏɴɢʀᴀᴛᴜʟᴀᴛɪᴏɴs {user.first_name.upper()} 🎉\n\n"
-               f"👤 ɴᴀᴍᴇ : {d.get('PlayerNickname')}\n"
-               f"🆔 ᴜɪᴅ : {uid}\n"
-               f"🌍 ʀᴇɢɪᴏɴ : {reg.upper()}\n\n"
-               f"👍 ʙᴇꜰᴏʀᴇ : {d.get('LikesbeforeCommand')}\n"
-               f"❤️ ᴀᴅᴅᴇᴅ : +{d.get('LikesGivenByAPI')}\n"
-               f"🔥 ᴀꜰᴛᴇʀ : {d.get('LikesafterCommand')}")
+        # Naya Stylish Format according to screenshot
+        res = (
+            f"     {sc('HEY')} {sc(user.first_name)} !!\n"
+            f"✪━━━━━━━━━━━━━━━✪\n"
+            f"╭💝\n"
+            f"│{sc('ꜱᴜᴄᴄᴇssꜰᴜʟʟʏ ʟɪᴋᴇ ꜱᴇɴᴛ')}\n"
+            f"╰━━━━━━━━━━━━━━━✪\n\n"
+            f"╭━⟮ ✦ {sc('ᴘʟᴀʏᴇʀ ɪɴꜰᴏ')} ✦ ⟯\n"
+            f"│👤 {sc('ɴᴀᴍᴇ')}: {d.get('PlayerNickname')}\n"
+            f"│🆔 {sc('ᴜɪᴅ')}: {uid}\n"
+            f"│🌍 {sc('ʀᴇɢɪᴏɴ')}: {reg.upper()}\n"
+            f"╰━━━━━━━━━━━━━━━✪\n\n"
+            f"╭━⟮ ✦ {sc('ʟɪᴋᴇ ᴅᴇᴛᴀɪʟꜱ')} ✦ ⟯\n"
+            f"│👍 {sc('ʟɪᴋᴇs ʙᴇꜰᴏʀᴇ')}: {d.get('LikesbeforeCommand')}\n"
+            f"│❤️ {sc('ʟɪᴋᴇs ᴀꜰᴛᴇʀ')}:    {d.get('LikesafterCommand')}\n"
+            f"│➕ {sc('ʟɪᴋᴇs ɢɪᴠᴇɴ')}:   +{d.get('LikesGivenByAPI')}\n"
+            f"╰━━━━━━━━━━━━━━━✪"
+        )
         await msg.edit_text(res)
     except Exception:
         await msg.edit_text(sc("Error 😵"))
