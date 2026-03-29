@@ -44,7 +44,7 @@ async def start(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await chat.send_message("⚠️ Private Bot. Use in official group.", reply_markup=kb)
     elif chat.id == GRP or await is_o(user):
         name = sc(user.first_name)
-        await chat.send_message(f"Hey {name}!\nOwner: @ankitraj444\nCommands: /like, /help")
+        await chat.send_message(f"Hey {name}!\nOwner: @ankitraj444\nCommands: /like, /update, /check")
 
 async def like(u: Update, c: ContextTypes.DEFAULT_TYPE):
     chat, user = u.effective_chat, u.effective_user
@@ -62,8 +62,10 @@ async def like(u: Update, c: ContextTypes.DEFAULT_TYPE):
             async with ses.get(f"{API}?uid={uid}&server_name={reg}") as r:
                 d = await r.json()
         
-        if d.get("status") != 1:
-            await msg.edit_text("Try next time 😵")
+        # FIXED: Ab status 1 aur 2 dono accept honge
+        api_status = d.get("status")
+        if api_status not in [1, 2]:
+            await msg.edit_text(f"Try next time 😵 (Status: {api_status})")
             return
             
         fname = sc(user.first_name)
@@ -97,21 +99,34 @@ async def like(u: Update, c: ContextTypes.DEFAULT_TYPE):
 async def up(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if await is_o(u.effective_user):
         c.user_data['u'] = True
-        await u.effective_chat.send_message("📤 Send .json")
+        await u.effective_chat.send_message("📤 Send .json file now to update GitHub.")
+
+async def check_repo(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    if await is_o(u.effective_user):
+        m = await u.effective_chat.send_message("🔍 Checking GitHub Connection...")
+        try:
+            r = Github(G_TOKEN).get_repo(REPO)
+            files = [f.path for f in r.get_contents("")]
+            status = "✅ GitHub Connected!\n\n"
+            for p in ["token_ind.json", "token_ind_visit.json"]:
+                status += f"● {p}: {'Found' if p in files else 'Not Found'}\n"
+            await m.edit_text(status)
+        except Exception as e:
+            await m.edit_text(f"❌ Connection Error: {e}")
 
 async def doc(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if c.user_data.get('u') and await is_o(u.effective_user):
         d = u.message.document
         if d and d.file_name.endswith('.json'):
-            m = await u.effective_chat.send_message("⏳ Updating...")
+            m = await u.effective_chat.send_message("⏳ Updating GitHub Files...")
             try:
                 f = await c.bot.get_file(d.file_id)
                 b = await f.download_as_bytearray()
                 r = Github(G_TOKEN).get_repo(REPO)
                 for p in ["token_ind.json", "token_ind_visit.json"]:
                     rf = r.get_contents(p)
-                    r.update_file(rf.path, "Update", bytes(b), rf.sha)
-                await m.edit_text("✅ Done!")
+                    r.update_file(rf.path, "Bot Auto Update", bytes(b), rf.sha)
+                await m.edit_text("✅ GitHub Files Updated Successfully!")
             except Exception as e:
                 await m.edit_text(f"Update Failed: {e}")
             c.user_data['u'] = False
@@ -122,5 +137,6 @@ if __name__ == "__main__":
     bot.add_handler(CommandHandler("start", start))
     bot.add_handler(CommandHandler("like", like))
     bot.add_handler(CommandHandler("update", up))
+    bot.add_handler(CommandHandler("check", check_repo))
     bot.add_handler(MessageHandler(filters.Document.ALL, doc))
     bot.run_polling(drop_pending_updates=True)
