@@ -20,7 +20,7 @@ B_TOKEN = os.environ.get("BOT_TOKEN")
 G_TOKEN = os.environ.get("G_TOKEN")
 ADMIN_ID = os.environ.get("ADMIN_ID")
 REPO = "jjppjjpp0099-ux/Like-api-2"
-API = "ob-53like-api.vercel.app"
+API = "https://ob-53like-api.vercel.app/like"
 GRP = -1002316321534
 
 def sc(t):
