@@ -2,263 +2,267 @@ import aiohttp, os, asyncio, json, time, sys
 from flask import Flask
 from threading import Thread
 from github import Github
-import jwt  # PyJWT library
+import jwt  # PyJWT library for Token Expiry check
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
-# --- Web Server (Detailed Health Check) ---
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# --- WEB SERVER (STABILITY FOR RENDER) ---
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 app = Flask('')
 
 @app.route('/')
 def home():
+    # Render's health check needs a 200 OK response
     return {
         "status": "online",
-        "bot_name": "GT BOT",
-        "message": "Server is running perfectly on Render"
+        "bot": "GT BOT",
+        "server": "Active"
     }, 200
 
 def run_flask_server():
     try:
         port = int(os.environ.get("PORT", 10000))
-        print(f"[SYSTEM] Starting Flask server on port {port}...")
+        print(f"[SYSTEM] Flask running on port {port}")
         app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
     except Exception as e:
-        print(f"[ERROR] Flask Server failed: {e}")
+        print(f"[CRITICAL] Web Server Error: {e}")
 
-# --- Configuration & Environment ---
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-GITHUB_TOKEN = os.environ.get("G_TOKEN")
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# --- CONFIGURATION (ENV VARIABLES) ---
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+B_TOKEN = os.environ.get("BOT_TOKEN")
+G_TOKEN = os.environ.get("G_TOKEN")
 ADMIN_ID = os.environ.get("ADMIN_ID")
 REPO_NAME = "jjppjjpp0099-ux/OB53like-api"
-RAILWAY_API = "https://xtytdtyj-jwt.up.railway.app/token"
-VERCEL_LIKE_API = "https://ob-53like-api.vercel.app/like"
-GROUP_ID = -1002316321534
+JWT_API_URL = "https://xtytdtyj-jwt.up.railway.app/token"
+LIKE_API = "https://ob-53like-api.vercel.app/like"
+GRP_ID = -1002316321534
 
-# --- Helper Functions ---
-def small_caps(text):
-    normal = "abcdefghijklmnopqrstuvwxyz0123456789"
-    fancy = "ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀsᴛᴜᴠᴡxʏᴢ0123456789"
-    trans = str.maketrans(normal, fancy)
-    return str(text).lower().translate(trans)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# --- UTILITY & SECURITY FUNCTIONS ---
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def sc(t):
+    """Converts normal text to Small Caps for better UI"""
+    n, s = "abcdefghijklmnopqrstuvwxyz0123456789", "ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀsᴛᴜᴠᴡxʏᴢ0123456789"
+    return str(t).lower().translate(str.maketrans(n, s))
 
-async def check_admin(user):
-    return str(user.id) == str(ADMIN_ID) or user.username == "ankitraj444"
+async def is_admin(u):
+    """Verifies if the user is Ankit or Admin"""
+    return str(u.id) == str(ADMIN_ID) or u.username == "ankitraj444"
 
-# --- Advanced Logic: Expiry & GitHub ---
-def is_token_expired(tokens):
-    """Detailed check for JWT Expiry"""
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# --- TOKEN EXPIRY & GITHUB LOGIC ---
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def check_token_expiry(token_data):
+    """Checks if the first token in tokens.json is near expiry"""
     try:
-        if not tokens or not isinstance(tokens, list):
-            print("[AUTO] No tokens found in file. Triggering update...")
+        if not token_data or not isinstance(token_data, list) or len(token_data) == 0:
             return True
         
-        first_token = tokens[0].get('token')
-        if not first_token:
-            return True
+        token = token_data[0].get('token')
+        if not token: return True
 
-        # Decode JWT to check 'exp' claim
-        decoded = jwt.decode(first_token, options={"verify_signature": False})
-        expiry_timestamp = decoded.get('exp')
+        # Decode JWT without signature verification
+        payload = jwt.decode(token, options={"verify_signature": False})
+        exp = payload.get('exp')
         
-        if expiry_timestamp:
-            time_remaining = expiry_timestamp - time.time()
-            print(f"[AUTO] Token expires in {int(time_remaining)} seconds.")
-            # If less than 10 minutes (600s) left, return True
-            return time_remaining < 600
-        return True
+        # If less than 10 mins (600s) left, trigger refresh
+        if exp and (time.time() + 600) > exp:
+            print("[AUTO] Token expiring soon. Refreshing...")
+            return True
+        return False
     except Exception as e:
-        print(f"[ERROR] JWT Decode failed: {e}")
+        print(f"[ERROR] Expiry Check: {e}")
         return True
 
-async def push_to_github(data_list, message):
-    """Reliable GitHub File Update Logic"""
+async def github_push(content, commit_msg):
+    """Pushes data to GitHub Repository"""
     try:
-        g = Github(GITHUB_TOKEN)
+        g = Github(G_TOKEN)
         repo = g.get_repo(REPO_NAME)
-        content = json.dumps(data_list, indent=4)
+        json_data = json.dumps(content, indent=4)
         
         try:
-            file_ref = repo.get_contents("tokens.json")
-            repo.update_file(file_ref.path, message, content, file_ref.sha)
-            print(f"[GITHUB] Successfully updated tokens.json: {message}")
+            file = repo.get_contents("tokens.json")
+            repo.update_file(file.path, commit_msg, json_data, file.sha)
+            print(f"[GITHUB] Update Success: {commit_msg}")
         except:
-            repo.create_file("tokens.json", "Initial File Creation", content)
-            print("[GITHUB] Created new tokens.json file.")
+            repo.create_file("tokens.json", "Initial Creation", json_data)
+            print("[GITHUB] File Created")
         return True
     except Exception as e:
-        print(f"[ERROR] GitHub Push Error: {e}")
+        print(f"[CRITICAL] GitHub Error: {e}")
         return False
 
-# --- Background Automation Engine ---
-async def auto_refresh_engine(application):
-    print("[SYSTEM] Auto Refresh Engine started...")
-    await asyncio.sleep(20) # Initial wait for stability
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# --- AUTO REFRESH BACKGROUND ENGINE ---
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def auto_refresh_task(application):
+    """Background loop to keep tokens fresh 24/7"""
+    print("[SYSTEM] Background Engine Started.")
+    await asyncio.sleep(20) # Stability delay
     
     while True:
         try:
-            print("[AUTO] Checking token status on GitHub...")
-            g = Github(GITHUB_TOKEN)
+            g = Github(G_TOKEN)
             repo = g.get_repo(REPO_NAME)
             
-            # Fetch Current Tokens
+            # 1. Read tokens.json
             try:
-                remote_file = repo.get_contents("tokens.json")
-                current_tokens = json.loads(remote_file.decoded_content.decode())
-            except:
-                current_tokens = []
+                t_file = repo.get_contents("tokens.json")
+                tokens = json.loads(t_file.decoded_content.decode())
+            except: tokens = []
 
-            # Check if Update is Required
-            if is_token_expired(current_tokens):
-                print("[AUTO] Expiry detected! Fetching new tokens from Railway...")
+            # 2. If expired, fetch new ones from Railway
+            if check_token_expiry(tokens):
+                u_file = repo.get_contents("uidpass.json")
+                u_data = json.loads(u_file.decoded_content.decode())
                 
-                # Get Credentials
-                cred_file = repo.get_contents("uidpass.json")
-                credentials = json.loads(cred_file.decoded_content.decode())
-                
-                new_tokens_list = []
+                fresh_list = []
                 async with aiohttp.ClientSession() as session:
-                    for acc in credentials:
-                        api_call = f"{RAILWAY_API}?uid={acc['uid']}&password={acc['password']}"
-                        async with session.get(api_call) as response:
-                            if response.status == 200:
-                                data = await response.json()
-                                if data.get("token"):
-                                    new_tokens_list.append({"token": data.get("token")})
+                    for acc in u_data:
+                        url = f"{JWT_API_URL}?uid={acc['uid']}&password={acc['password']}"
+                        async with session.get(url) as r:
+                            if r.status == 200:
+                                res = await r.json()
+                                if res.get("token"):
+                                    fresh_list.append({"token": res.get("token")})
                 
-                if new_tokens_list:
-                    success = await push_to_github(new_tokens_list, "Auto-Update: Tokens Refreshed")
-                    if success:
+                # 3. Push new tokens back to GitHub
+                if fresh_list:
+                    if await github_push(fresh_list, "Automated Token Refresh"):
                         await application.bot.send_message(chat_id=ADMIN_ID, text="🔄 **Auto update done**")
-                else:
-                    print("[AUTO] Failed to fetch any tokens from API.")
             else:
-                print("[AUTO] Tokens are still valid. No action taken.")
-        
-        except Exception as e:
-            print(f"[CRITICAL] Auto Engine Loop Error: {e}")
-        
-        await asyncio.sleep(60) # Wait for 1 minute before next check
+                print("[AUTO] Tokens are fresh. Sleeping...")
 
-# --- Command Handlers ---
-async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.id == GROUP_ID or await check_admin(update.effective_user):
-        user_name = small_caps(update.effective_user.first_name)
-        welcome_text = (
-            f"!! ʜᴇʏ {user_name} !!\n"
+        except Exception as e:
+            print(f"[AUTO LOOP ERROR] {e}")
+            
+        await asyncio.sleep(60) # Check every 1 minute
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# --- TELEGRAM COMMAND HANDLERS ---
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def start_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    if u.effective_chat.id == GRP_ID or await is_admin(u.effective_user):
+        name = sc(u.effective_user.first_name)
+        text = (
+            f"!! ʜᴇʏ {name} !!\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "ᴏᴡɴᴇʀ: @ankitraj444\n"
             "sᴛᴀᴛᴜs: ᴏɴʟɪɴᴇ ✅\n\n"
-            "📜 ᴄᴏᴍᴍᴀɴᴅs:\n"
-            "➥ /like [ʀᴇɢɪᴏɴ] [ᴜɪᴅ]\n"
-            "➥ /update - ᴍᴀɴᴜᴀʟ ᴛᴏᴋᴇɴ ᴜᴘᴅᴀᴛᴇ\n"
-            "➥ /check - ʀᴇᴘᴏ ᴄᴏɴɴᴇᴄᴛɪᴠɪᴛʏ\n"
-            "━━━━━━━━━━━━━━━━━━━━"
+            "📜 Commands:\n"
+            "➥ /like [region] [uid]\n"
+            "➥ /update - Manual Update\n"
+            "➥ /check - System Check"
         )
-        await update.effective_chat.send_message(welcome_text)
+        await u.effective_chat.send_message(text)
 
-async def like_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_chat.id == GROUP_ID or await check_admin(update.effective_user)):
+async def like_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    if not (u.effective_chat.id == GRP_ID or await is_admin(u.effective_user)): return
+    
+    if len(c.args) < 2:
+        await u.effective_chat.send_message("❌ /like [region] [uid]")
         return
-
-    if len(context.args) < 2:
-        await update.effective_chat.send_message("❌ Usage: /like [region] [uid]")
-        return
-
-    region, uid = context.args[0].lower(), context.args[1]
-    status_msg = await update.effective_chat.send_message("⌛ ᴘʀᴏᴄᴇssɪɴɢ ʏᴏᴜʀ ʀᴇǫᴜᴇsᴛ...")
+    
+    reg, uid = c.args[0].lower(), c.args[1]
+    wait = await u.effective_chat.send_message("⌛ ᴘʀᴏᴄᴇssɪɴɢ...")
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f"{VERCEL_LIKE_API}?uid={uid}&server_name={region}") as resp:
-                result = await resp.json()
+        async with aiohttp.ClientSession() as ses:
+            async with ses.get(f"{LIKE_API}?uid={uid}&server_name={reg}") as r:
+                d = await r.json()
+        
+        name = d.get('PlayerNickname', 'Unknown')
+        before = d.get('LikesbeforeCommand', '0')
+        after = d.get('LikesafterCommand', '0')
+        status = d.get("status")
 
-        if result.get("status") in [1, 2]:
-            final_res = (
-                "!! ʜᴇʏ ᴀɴᴋɪᴛ !!\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "💖 sᴜᴄᴄᴇssꜰᴜʟʟʏ ʟɪᴋᴇ sᴇɴᴛ\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "👤 ɴᴀᴍᴇ: " + str(result.get('PlayerNickname')) + "\n"
-                "🆔 ᴜɪᴅ: " + str(uid) + "\n"
-                "🌍 ʀᴇɢɪᴏɴ: " + region.upper() + "\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "👍 ʟɪᴋᴇs ʙᴇꜰᴏʀᴇ: " + str(result.get('LikesbeforeCommand')) + "\n"
-                "❤️ ʟɪᴋᴇs ᴀꜰᴛᴇʀ: " + str(result.get('LikesafterCommand')) + "\n"
-                "➕ ʟɪᴋᴇs ɢɪᴠᴇɴ: +20\n"
-                "━━━━━━━━━━━━━━━━━━━━"
-            )
-            await status_msg.edit_text(final_res)
-        else:
-            await status_msg.edit_text(f"❌ Try next time. (Status: {result.get('status')})")
+        # Custom logic for "Claimed" or success
+        given = "+20" if status in [1, 2] else "Claimed"
+
+        # Your Special Box Style
+        final = (
+            f"ㅤㅤㅤ!! ʜᴇʏ ᴀɴᴋɪᴛ !!\n"
+            f"✪━━━━━━━━━━━━━━━✪\n"
+            f"╭💝\n"
+            f"│ꜱᴜᴄᴄᴇssꜰᴜʟʟʏ ʟɪᴋᴇ ꜱᴇɴᴛ\n"
+            f"╰━━━━━━━━━━━━━━━✪\n\n"
+            f"╭━⟮ ✦ ᴘʟᴀʏᴇʀ ɪɴꜰᴏ ✦ ⟯\n"
+            f"│👤 ɴᴀᴍᴇ: {name}\n"
+            f"│🆔 ᴜɪᴅ: {uid}\n"
+            f"│🌍 ʀᴇɢɪᴏɴ: {reg.upper()}\n"
+            f"╰━━━━━━━━━━━━━━━✪\n\n"
+            f"╭━⟮ ✦ ʟɪᴋᴇ ᴅᴇᴛᴀɪʟꜱ ✦ ⟯\n"
+            f"│👍 ʟɪᴋᴇs ʙᴇꜰᴏʀᴇ:  {before}\n"
+            f"│❤️ ʟɪᴋᴇs ᴀꜰᴛᴇʀ:    {after}\n"
+            f"│➕ ʟɪᴋᴇs ɢɪᴠᴇɴ:   {given}\n"
+            f"╰━━━━━━━━━━━━━━━✪"
+        )
+        await wait.edit_text(final)
     except Exception as e:
-        await status_msg.edit_text(f"😵 API Error: {e}")
+        await wait.edit_text(f"❌ Error: {e}")
 
-async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await check_admin(update.effective_user):
-        context.user_data['waiting_for_file'] = True
-        await update.effective_chat.send_message("📤 ᴘʟᴇᴀsᴇ sᴇɴᴅ ᴛʜᴇ `tokens.json` ꜰɪʟᴇ ᴛᴏ ᴜᴘᴅᴀᴛᴇ ᴍᴀɴᴜᴀʟʟʏ.")
+async def update_trigger(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    if await is_admin(u.effective_user):
+        c.user_data['waiting'] = True
+        await u.effective_chat.send_message("📤 Send `tokens.json` file now.")
 
-async def file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get('waiting_for_file') and await check_admin(update.effective_user):
-        document = update.message.document
-        if document.file_name.endswith('.json'):
-            progress = await update.effective_chat.send_message("⏳ ᴜᴘʟᴏᴀᴅɪɴɢ ᴛᴏ ɢɪᴛʜᴜʙ...")
-            try:
-                tg_file = await context.bot.get_file(document.file_id)
-                content_bytes = await tg_file.download_as_bytearray()
-                json_data = json.loads(content_bytes.decode('utf-8'))
-                
-                if await push_to_github(json_data, "Manual Update via Telegram"):
-                    await progress.edit_text("✅ **Manual update done**")
-                else:
-                    await progress.edit_text("❌ GitHub Push Failed.")
-            except Exception as e:
-                await progress.edit_text(f"❌ Error: {e}")
-            context.user_data['waiting_for_file'] = False
+async def doc_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    if c.user_data.get('waiting') and await is_admin(u.effective_user):
+        doc = u.message.document
+        if doc.file_name.endswith('.json'):
+            msg = await u.effective_chat.send_message("⏳ Updating GitHub...")
+            f = await c.bot.get_file(doc.file_id)
+            data = await f.download_as_bytearray()
+            if await github_push(json.loads(data.decode()), "Manual Update via Bot"):
+                await msg.edit_text("✅ **Manual update done**")
+            else:
+                await msg.edit_text("❌ Failed to push.")
+            c.user_data['waiting'] = False
 
-async def check_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await check_admin(update.effective_user):
-        m = await update.effective_chat.send_message("🔍 ᴄʜᴇᴄᴋɪɴɢ sʏsᴛᴇᴍ ɪɴᴛᴇɢʀɪᴛʏ...")
+async def check_sys(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    if await is_admin(u.effective_user):
         try:
-            g = Github(GITHUB_TOKEN)
-            repo = g.get_repo(REPO_NAME)
-            await m.edit_text(f"✅ **Connected!**\nRepo: `{REPO_NAME}`\nBot Status: Active")
-        except Exception as e:
-            await m.edit_text(f"❌ Connection Failed: {e}")
+            g = Github(G_TOKEN)
+            g.get_repo(REPO_NAME)
+            await u.effective_chat.send_message(f"✅ System Online\nRepo: {REPO_NAME}")
+        except: await u.effective_chat.send_message("❌ Repo Error")
 
-# --- Main Application Runner ---
-async def run_bot():
-    print("[SYSTEM] Initializing Telegram Bot...")
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# --- MAIN CORE RUNNER ---
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def main():
+    print("[SYSTEM] Bot Initialization...")
+    application = ApplicationBuilder().token(B_TOKEN).build()
     
-    # Registering Handlers
-    application.add_handler(CommandHandler("start", start_handler))
-    application.add_handler(CommandHandler("like", like_handler))
-    application.add_handler(CommandHandler("update", update_command))
-    application.add_handler(CommandHandler("check", check_handler))
-    application.add_handler(MessageHandler(filters.Document.ALL, file_handler))
+    # Handlers Registration
+    application.add_handler(CommandHandler("start", start_cmd))
+    application.add_handler(CommandHandler("like", like_cmd))
+    application.add_handler(CommandHandler("update", update_trigger))
+    application.add_handler(CommandHandler("check", check_sys))
+    application.add_handler(MessageHandler(filters.Document.ALL, doc_handler))
     
-    # Starting Background Engine
-    asyncio.create_task(auto_refresh_engine(application))
+    # Run Auto-Refresh in Background
+    asyncio.create_task(auto_refresh_task(application))
     
-    # Core Bot Runner (Polished for Render)
+    # Start Polling
     async with application:
         await application.initialize()
         await application.start()
-        print("[SYSTEM] Bot Polling started.")
+        print("[SYSTEM] Bot is Live!")
         await application.updater.start_polling(drop_pending_updates=True)
-        
-        # Keep Alive Loop
-        stop_event = asyncio.Event()
-        await stop_event.wait()
+        # Keep process alive
+        await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    # Start Web Server in separate thread
+    # Start Flask Webserver
     flask_thread = Thread(target=run_flask_server, daemon=True)
     flask_thread.start()
     
-    # Run the main async function
+    # Execute Bot
     try:
-        asyncio.run(run_bot())
+        asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        print("[SYSTEM] Bot stopped.")
+        print("[SYSTEM] Shutdown.")
