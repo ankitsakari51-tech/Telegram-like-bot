@@ -2,3 +2,4 @@ python-telegram-bot
 aiohttp
 flask
 PyGithub
+PyJWT
