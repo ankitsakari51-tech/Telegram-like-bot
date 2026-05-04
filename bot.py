@@ -7,15 +7,16 @@ import os
 import asyncio
 import json
 import time
+import sys
 import logging
 import jwt  # PyJWT library for Token Expiry check
 from flask import Flask
 from threading import Thread
 from github import Github
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
-# --- Logging Setup ---
+# --- Logging Setup (Jaisa Render logs mein dikhta hai) ---
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -50,7 +51,7 @@ def run_flask_server():
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 B_TOKEN = os.environ.get("BOT_TOKEN")
 G_TOKEN = os.environ.get("G_TOKEN")
-ADMIN_ID = str(os.environ.get("ADMIN_ID", ""))
+ADMIN_ID = os.environ.get("ADMIN_ID")
 REPO_NAME = "jjppjjpp0099-ux/OB53like-api"  # Backend ID
 JWT_API_URL = "https://xtytdtyj-jwt.up.railway.app/token"
 LIKE_API = "https://ob-53like-api.vercel.app/like"
@@ -68,23 +69,27 @@ def sc(t):
 async def is_admin(u):
     """Verifies if the user is Ankit or Admin"""
     if not u: return False
-    return str(u.id) == ADMIN_ID or u.username == "ankitraj444"
+    return str(u.id) == str(ADMIN_ID) or u.username == "ankitraj444"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # --- TOKEN & GITHUB ENGINE ---
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def check_token_expiry(token_data):
+    """Checks if tokens in tokens.json are still valid using PyJWT"""
     try:
         print("--> [AUTO] Checking token validity...")
         if not token_data or not isinstance(token_data, list) or len(token_data) == 0:
+            print("--> [AUTO] tokens.json is empty or invalid.")
             return True
         
         t = token_data[0].get('token')
         if not t: return True
 
+        # Decode JWT to check 'exp'
         payload = jwt.decode(t, options={"verify_signature": False})
         exp = payload.get('exp')
         
+        # Buffer of 10 minutes (600s)
         is_expired = (time.time() + 600) > exp if exp else True
         if is_expired:
             print("--> [AUTO] Token expired or near expiry.")
@@ -96,6 +101,7 @@ def check_token_expiry(token_data):
         return True
 
 async def github_push(content, commit_msg):
+    """Reliable GitHub File Update Engine"""
     try:
         print(f"--> [GITHUB] Attempting to push: {commit_msg}")
         g = Github(G_TOKEN)
@@ -105,8 +111,10 @@ async def github_push(content, commit_msg):
         try:
             f = repo.get_contents("tokens.json")
             repo.update_file(f.path, commit_msg, json_string, f.sha)
+            print("--> [GITHUB] tokens.json updated successfully.")
         except:
             repo.create_file("tokens.json", "Initial Creation", json_string)
+            print("--> [GITHUB] tokens.json created as new file.")
         return True
     except Exception as e:
         print(f"--> [CRITICAL] GitHub Push Error: {e}")
@@ -116,26 +124,29 @@ async def github_push(content, commit_msg):
 # --- AUTO REFRESH BACKGROUND LOOP ---
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def auto_refresh_engine(application):
-    print("-->[SYSTEM] Background Auto-Refresh Engine Started.")
-    await asyncio.sleep(20)
+    """Har 1 minute mein check karega aur expire hote hi update karega"""
+    print("--> [SYSTEM] Background Auto-Refresh Engine Started.")
+    await asyncio.sleep(20) # Start stability delay
     
     while True:
         try:
             g = Github(G_TOKEN)
             repo = g.get_repo(REPO_NAME)
             
+            # 1. tokens.json load karo
             try:
                 t_file = repo.get_contents("tokens.json")
                 tokens = json.loads(t_file.decoded_content.decode())
             except:
                 tokens = []
 
+            # 2. Check if refresh needed
             if check_token_expiry(tokens):
-                print("-->[AUTO] Fetching fresh credentials from uidpass.json...")
+                print("--> [AUTO] Fetching fresh credentials from uidpass.json...")
                 u_file = repo.get_contents("uidpass.json")
                 u_data = json.loads(u_file.decoded_content.decode())
                 
-                fresh_tokens =[]
+                fresh_tokens = []
                 async with aiohttp.ClientSession() as session:
                     for acc in u_data:
                         api_url = f"{JWT_API_URL}?uid={acc['uid']}&password={acc['password']}"
@@ -145,15 +156,19 @@ async def auto_refresh_engine(application):
                                 if res.get("token"):
                                     fresh_tokens.append({"token": res.get("token")})
                 
+                # 3. GitHub par push karo
                 if fresh_tokens:
                     if await github_push(fresh_tokens, "Automated Token Refresh Engine"):
                         await application.bot.send_message(chat_id=ADMIN_ID, text="🔄 **Auto update done**")
+                else:
+                    print("--> [AUTO] Failed to fetch new tokens from Railway API.")
             else:
-                pass
+                print("--> [AUTO] No update required at this time.")
+
         except Exception as e:
             print(f"--> [AUTO LOOP ERROR] {e}")
             
-        await asyncio.sleep(60)
+        await asyncio.sleep(60) # Har 1 minute mein check
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # --- TELEGRAM COMMAND HANDLERS ---
@@ -167,7 +182,7 @@ async def start_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
             "ᴏᴡɴᴇʀ: @ankitraj444\n"
             "sᴛᴀᴛᴜs: ᴏɴʟɪɴᴇ ✅\n\n"
             "📜 ᴄᴏᴍᴍᴀɴᴅs:\n"
-            "➥ /like[ʀᴇɢɪᴏɴ] [ᴜɪᴅ]\n"
+            "➥ /like [ʀᴇɢɪᴏɴ] [ᴜɪᴅ]\n"
             "➥ /update - ᴍᴀɴᴜᴀʟ ᴛᴏᴋᴇɴ ᴜᴘᴅᴀᴛᴇ\n"
             "➥ /check - ʀᴇᴘᴏ ᴄᴏɴɴᴇᴄᴛɪᴠɪᴛʏ\n"
             "━━━━━━━━━━━━━━━━━━━━"
@@ -184,41 +199,22 @@ async def like_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
     reg, uid = c.args[0].lower(), c.args[1]
     wait_msg = await u.effective_chat.send_message("⌛ ᴘʀᴏᴄᴇssɪɴɢ...")
 
-    caller_name = sc(u.effective_user.first_name)
-
     try:
         async with aiohttp.ClientSession() as ses:
             async with ses.get(f"{LIKE_API}?uid={uid}&server_name={reg}") as r:
                 d = await r.json()
-                
-                # Check if API returned an error specifically for Wrong UID
-                if r.status != 200:
-                    if "Invalid UID" in d.get("error", "") or "AccountNotFound" in str(d):
-                        await wait_msg.edit_text("❌ Wrong Player UID")
-                        return
-                    else:
-                        await wait_msg.edit_text(f"😵 API Error: {d.get('error', 'Unknown Error')}")
-                        return
-
+        
         name = d.get('PlayerNickname', 'Unknown')
         before = d.get('LikesbeforeCommand', '0')
         after = d.get('LikesafterCommand', '0')
-        given_by_api = int(d.get('LikesGivenByAPI', 0))
+        status = d.get("status")
 
-        # Check for Wrong UID (if name is missing or unknown)
-        if name == 'Unknown' or not name:
-            await wait_msg.edit_text("❌ Wrong Player UID")
-            return
+        # Logic for "Claimed" or success
+        given = "+20" if status in [1, 2] else "Claimed"
 
-        # CLAIMED LOGIC: If no likes were added, show Claimed
-        if given_by_api == 0:
-            given = "Claimed"
-        else:
-            given = f"+{given_by_api}"
-
-        # Dynamic User Name & Dynamic Likes 
+        # Special Box Style Design
         final_box = (
-            f"ㅤㅤㅤ!! ʜᴇʏ {caller_name.upper()} !!\n"
+            f"ㅤㅤㅤ!! ʜᴇʏ ᴀɴᴋɪᴛ !!\n"
             f"✪━━━━━━━━━━━━━━━✪\n"
             f"╭💝\n"
             f"│ꜱᴜᴄᴄᴇssꜰᴜʟʟʏ ʟɪᴋᴇ ꜱᴇɴᴛ\n"
@@ -235,9 +231,8 @@ async def like_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
             f"╰━━━━━━━━━━━━━━━✪"
         )
         await wait_msg.edit_text(final_box)
-
     except Exception as e:
-        await wait_msg.edit_text("❌ Wrong Player UID or Server Down")
+        await wait_msg.edit_text(f"😵 API Error: {e}")
 
 async def update_trigger(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if await is_admin(u.effective_user):
@@ -263,11 +258,13 @@ async def file_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
             c.user_data['waiting_for_file'] = False
 
 async def check_sys(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    """Private Repo Connectivity Check"""
     if await is_admin(u.effective_user):
         wait = await u.effective_chat.send_message("🔍 ᴄʜᴇᴄᴋɪɴɢ...")
         try:
             g = Github(G_TOKEN)
             g.get_repo(REPO_NAME)
+            # Private Format as requested
             await wait.edit_text("✅ **Connected!**\nRepo: `OB53`\nBot Status: Active")
         except Exception as e:
             await wait.edit_text(f"❌ Connection Error: {e}")
@@ -279,26 +276,32 @@ async def main_runner():
     print("--> [SYSTEM] Initializing GT BOT Engine...")
     application = ApplicationBuilder().token(B_TOKEN).build()
     
+    # Registering Handlers
     application.add_handler(CommandHandler("start", start_cmd))
     application.add_handler(CommandHandler("like", like_cmd))
     application.add_handler(CommandHandler("update", update_trigger))
     application.add_handler(CommandHandler("check", check_sys))
     application.add_handler(MessageHandler(filters.Document.ALL, file_handler))
     
+    # Start Auto-Refresh Engine
     asyncio.create_task(auto_refresh_engine(application))
     
+    # Start Polling (Custom loop for Render stability)
     async with application:
         await application.initialize()
         await application.start()
         print("--> [SYSTEM] Bot is Live and Polling.")
         await application.updater.start_polling(drop_pending_updates=True)
+        # Keep alive
         stop_event = asyncio.Event()
         await stop_event.wait()
 
 if __name__ == "__main__":
+    # Start Flask Webserver in daemon thread
     flask_thread = Thread(target=run_flask_server, daemon=True)
     flask_thread.start()
     
+    # Run the main async bot loop
     try:
         asyncio.run(main_runner())
     except (KeyboardInterrupt, SystemExit):
