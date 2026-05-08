@@ -85,8 +85,8 @@ async def global_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if u.effective_chat.type == "private":
         if not await is_admin(u.effective_user):
             keyboard = [
-                [InlineKeyboardButton("👤 DM OWNER", url="https://t.me/ankitraj444")],
-                [InlineKeyboardButton("📢 JOIN GROUP", url="https://t.me/ankitraj4444")]
+                [InlineKeyboardButton("DM OWNER", url="https://t.me/ankitraj444")],
+                [InlineKeyboardButton("JOIN GROUP", url="https://t.me/ankitraj4444")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await u.message.reply_text(
