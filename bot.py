@@ -9,7 +9,7 @@ import json
 import time
 import logging
 import jwt  
-import re
+import re # Purane code se wapas add kiya link filtering ke liye
 from flask import Flask
 from threading import Thread
 from github import Github
@@ -62,22 +62,23 @@ async def is_admin(u):
     return str(u.id) == ADMIN_ID or u.username == "ankitraj444"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# --- PRIVATE ACCESS & ANTI-LINK LOGIC ---
+# --- PRIVATE ACCESS & ANTI-LINK LOGIC (RESTORED) ---
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 async def global_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    """Handles anti-link in groups and private access control as per old code"""
     if not u.message: return
 
     # 1. ANTI-LINK LOGIC (FOR GROUP)
     if u.effective_chat.id == GRP_ID:
         if not await is_admin(u.effective_user):
-            # Check for links in text or caption
+            # Check for links in text or caption using regex
             text = u.message.text or u.message.caption or ""
             urls = re.findall(r'(https?://\S+|t\.me/\S+|www\.\S+)', text)
             if urls:
                 try:
                     await u.message.delete()
-                    return # Stop processing further
+                    return # Stop processing this specific update
                 except Exception as e:
                     print(f"Error deleting link: {e}")
 
@@ -93,12 +94,13 @@ async def global_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
                 "Bot is private, use only official group 👇",
                 reply_markup=reply_markup
             )
-            return # Don't process other commands if unauthorized
+            return # Block unauthorized DM users from running commands
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # --- SMART TOKEN VERIFIER ---
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def verify_token_working(token):
+    """Checks if the token is ACTUALLY working on Garena Servers"""
     url = "https://client.ind.freefiremobile.com/GetPlayerPersonalShow"
     headers = {
         'User-Agent': "Dalvik/2.1.0 (Linux; U; Android 9; ASUS_Z01QD Build/PI)",
@@ -166,9 +168,10 @@ async def auto_refresh_engine(application):
             updated_count = 0
             needs_push = False
 
+            print("--> [AUTO] Scanning all tokens for health...")
             async with aiohttp.ClientSession() as session:
                 for i, acc in enumerate(u_data):
-                    if not AUTO_UPDATE_ACTIVE: break
+                    if not AUTO_UPDATE_ACTIVE: break 
                     
                     current_token = tokens[i].get("token", "")
                     is_expired = True
@@ -187,6 +190,7 @@ async def auto_refresh_engine(application):
                             is_working = await verify_token_working(current_token)
 
                     if is_expired or not is_working:
+                        print(f"--> [AUTO] Token {i+1} is dead. Fetching new...")
                         api_url = f"{JWT_API_URL}?uid={acc['uid']}&password={acc['password']}"
                         async with session.get(api_url) as r:
                             if r.status == 200:
@@ -215,7 +219,6 @@ async def auto_refresh_engine(application):
 # --- COMMAND HANDLERS ---
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def start_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
-    # Only allowed for Group or Admin
     if u.effective_chat.id == GRP_ID or await is_admin(u.effective_user):
         name = sc(u.effective_user.first_name)
         welcome_text = (
@@ -234,61 +237,162 @@ async def start_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
 async def status_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(u.effective_user): return
-    wait_msg = await u.effective_chat.send_message("🔍 **Scanning Tokens...**")
+    
+    wait_msg = await u.effective_chat.send_message("🔍 **Scanning Tokens Health. Please wait...**")
+    
     try:
         g = Github(G_TOKEN)
         repo = g.get_repo(REPO_NAME)
         t_file = repo.get_contents("tokens.json")
         tokens = json.loads(t_file.decoded_content.decode())
-        working, dead = 0, 0
+        
+        total = len(tokens)
+        working = 0
+        dead = 0
+        
+        last_updated = "Unknown"
+        if total > 0 and tokens[0].get("token"):
+            try:
+                payload = jwt.decode(tokens[0]["token"], options={"verify_signature": False})
+                last_updated = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(payload.get('iat', 0)))
+            except: pass
+
         for t_dict in tokens:
-            if await verify_token_working(t_dict.get("token", "")): working += 1
-            else: dead += 1
-        await wait_msg.edit_text(f"📊 **REPORT**\n✅ Live: {working}\n❌ Dead: {dead}")
+            t = t_dict.get("token", "")
+            if not t:
+                dead += 1
+                continue
+            
+            if await verify_token_working(t):
+                working += 1
+            else:
+                dead += 1
+                
+        loop_state = "ACTIVE 🟢" if AUTO_UPDATE_ACTIVE else "STOPPED 🔴"
+        
+        report = (
+            f"📊 **API STATUS REPORT** 📊\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📝 **Total Tokens :** {total}\n"
+            f"✅ **Working/Live :** {working}\n"
+            f"❌ **Dead/Expired :** {dead}\n"
+            f"🕒 **Last Updated :** {last_updated}\n"
+            f"⚙️ **Auto-Update  :** {loop_state}\n"
+            f"━━━━━━━━━━━━━━━━━━━━"
+        )
+        await wait_msg.edit_text(report)
+        
     except Exception as e:
-        await wait_msg.edit_text(f"❌ Error: {e}")
+        await wait_msg.edit_text(f"❌ Status check failed: {e}")
+
+async def stop_auto(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(u.effective_user): return
+    global AUTO_UPDATE_ACTIVE
+    AUTO_UPDATE_ACTIVE = False
+    await u.effective_chat.send_message("🛑 **EMERGENCY STOP:** Auto-update loop has been PAUSED.")
+
+async def start_auto(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(u.effective_user): return
+    global AUTO_UPDATE_ACTIVE
+    AUTO_UPDATE_ACTIVE = True
+    await u.effective_chat.send_message("🟢 **RESUMED:** Auto-update loop is now ACTIVE.")
 
 async def like_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if not (u.effective_chat.id == GRP_ID or await is_admin(u.effective_user)): return
+    
     if len(c.args) < 2:
         await u.effective_chat.send_message("❌ Usage: /like [region] [uid]")
         return
     
     reg, uid = c.args[0].lower(), c.args[1]
     wait_msg = await u.effective_chat.send_message("⌛ ᴘʀᴏᴄᴇssɪɴɢ...")
+
+    caller_name = sc(u.effective_user.first_name)
+
     try:
         async with aiohttp.ClientSession() as ses:
             async with ses.get(f"{LIKE_API}?uid={uid}&server_name={reg}") as r:
                 d = await r.json()
+                
                 if r.status != 200:
-                    await wait_msg.edit_text("❌ Error processing request")
-                    return
-        await wait_msg.edit_text(f"✅ Likes sent to {uid} ({reg})")
-    except:
-        await wait_msg.edit_text("❌ API Down")
+                    if "Invalid UID" in d.get("error", "") or "AccountNotFound" in str(d):
+                        await wait_msg.edit_text("❌ Wrong Player UID")
+                        return
+                    else:
+                        await wait_msg.edit_text(f"😵 API Error: {d.get('error', 'Unknown Error')}")
+                        return
+
+        name = d.get('PlayerNickname', 'Unknown')
+        before = d.get('LikesbeforeCommand', '0')
+        after = d.get('LikesafterCommand', '0')
+        given_by_api = int(d.get('LikesGivenByAPI', 0))
+
+        if name == 'Unknown' or not name:
+            await wait_msg.edit_text("❌ Wrong Player UID")
+            return
+
+        if given_by_api == 0:
+            given = "0 (Daily Limit Reached/Already Liked)"
+            msg_header = "ʟɪᴍɪᴛ ʀᴇᴀᴄʜᴇᴅ/ᴀʟʀᴇᴀᴅʏ ʟɪᴋᴇᴅ"
+        else:
+            given = f"+{given_by_api}"
+            msg_header = "ꜱᴜᴄᴄᴇssꜰᴜʟʟʏ ʟɪᴋᴇ ꜱᴇɴᴛ"
+
+        final_box = (
+            f"ㅤㅤㅤ!! ʜᴇʏ {caller_name.upper()} !!\n"
+            f"✪━━━━━━━━━━━━━━━✪\n"
+            f"╭💝\n"
+            f"│{msg_header}\n"
+            f"╰━━━━━━━━━━━━━━━✪\n\n"
+            f"╭━⟮ ✦ ᴘʟᴀʏᴇʀ ɪɴꜰᴏ ✦ ⟯\n"
+            f"│👤 ɴᴀᴍᴇ: {name}\n"
+            f"│🆔 ᴜɪᴅ: {uid}\n"
+            f"│🌍 ʀᴇɢɪᴏɴ: {reg.upper()}\n"
+            f"╰━━━━━━━━━━━━━━━✪\n\n"
+            f"╭━⟮ ✦ ʟɪᴋᴇ ᴅᴇᴛᴀɪʟꜱ ✦ ⟯\n"
+            f"│👍 ʟɪᴋᴇs ʙᴇꜰᴏʀᴇ:  {before}\n"
+            f"│❤️ ʟɪᴋᴇs ᴀꜰᴛᴇʀ:    {after}\n"
+            f"│➕ ʟɪᴋᴇs ɢɪᴠᴇɴ:   {given}\n"
+            f"╰━━━━━━━━━━━━━━━✪"
+        )
+        await wait_msg.edit_text(final_box)
+
+    except Exception as e:
+        await wait_msg.edit_text("❌ Wrong Player UID or Server Down")
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # --- MAIN CORE RUNNER ---
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def main_runner():
+    print("--> [SYSTEM] Initializing GT BOT Full Heavy Engine...")
     application = ApplicationBuilder().token(B_TOKEN).build()
     
     # Priority 1: Private check and Anti-Link (Checks every message)
+    # This part was added from the old code as requested.
     application.add_handler(MessageHandler(filters.ALL, global_handler), group=-1)
     
     # Priority 2: Standard Commands
     application.add_handler(CommandHandler("start", start_cmd))
     application.add_handler(CommandHandler("like", like_cmd))
     application.add_handler(CommandHandler("status", status_cmd))
+    application.add_handler(CommandHandler("stop1490", stop_auto))
+    application.add_handler(CommandHandler("start1490", start_auto))
     
     asyncio.create_task(auto_refresh_engine(application))
     
     async with application:
         await application.initialize()
         await application.start()
+        print("--> [SYSTEM] Bot is Live with Full Security and Auto-Refresh.")
         await application.updater.start_polling(drop_pending_updates=True)
         await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    Thread(target=run_flask_server, daemon=True).start()
-    asyncio.run(main_runner())
+    flask_thread = Thread(target=run_flask_server, daemon=True)
+    flask_thread.start()
+    
+    try:
+        asyncio.run(main_runner())
+    except (KeyboardInterrupt, SystemExit):
+        print("--> [SYSTEM] Shutdown Signal Received.")
