@@ -10,6 +10,7 @@ import time
 import logging
 import jwt  
 import re # Purane code se wapas add kiya link filtering ke liye
+import datetime # NEW: Added for Daily Auto Like Timer
 from flask import Flask
 from threading import Thread
 from github import Github
@@ -215,6 +216,83 @@ async def auto_refresh_engine(application):
             if not AUTO_UPDATE_ACTIVE: break
             await asyncio.sleep(1)
 
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# --- DAILY AUTO LIKE ENGINE (NEW) ---
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def daily_auto_like_engine(application):
+    print("--> [SYSTEM] Daily Auto Like Engine Started (Target: 06:00 AM IST).")
+    while True:
+        # Get Current IST Time (UTC + 5:30)
+        now_utc = datetime.datetime.utcnow()
+        now_ist = now_utc + datetime.timedelta(hours=5, minutes=30)
+        
+        # Check if time is exactly 06:00 AM
+        if now_ist.hour == 6 and now_ist.minute == 0:
+            print("--> [AUTO LIKE] Time is 06:00 AM IST. Running daily likes...")
+            try:
+                if os.path.exists("auto_uids.json"):
+                    with open("auto_uids.json", "r") as f:
+                        targets = json.load(f)
+                    
+                    for target in targets:
+                        reg = target.get("region", "ind").lower()
+                        uid = target.get("uid")
+                        if not uid: continue
+                        
+                        try:
+                            async with aiohttp.ClientSession() as ses:
+                                async with ses.get(f"{LIKE_API}?uid={uid}&server_name={reg}") as r:
+                                    if r.status == 200:
+                                        d = await r.json()
+                                        name = d.get('PlayerNickname', 'Unknown')
+                                        before = d.get('LikesbeforeCommand', '0')
+                                        after = d.get('LikesafterCommand', '0')
+                                        given_by_api = int(d.get('LikesGivenByAPI', 0))
+                                        
+                                        if name != 'Unknown' and name:
+                                            if given_by_api == 0:
+                                                given = "0 (Daily Limit Reached/Already Liked)"
+                                                msg_header = "ʟɪᴍɪᴛ ʀᴇᴀᴄʜᴇᴅ/ᴀʟʀᴇᴀᴅʏ ʟɪᴋᴇᴅ"
+                                            else:
+                                                given = f"+{given_by_api}"
+                                                msg_header = "ꜱᴜᴄᴄᴇssꜰᴜʟʟʏ ʟɪᴋᴇ ꜱᴇɴᴛ"
+
+                                            final_box = (
+                                                f"ㅤㅤㅤ!! 🤖 ᴀᴜᴛᴏ ᴅᴀɪʟʏ ʟɪᴋᴇ 🤖 !!\n"
+                                                f"✪━━━━━━━━━━━━━━━✪\n"
+                                                f"╭💝\n"
+                                                f"│{msg_header}\n"
+                                                f"╰━━━━━━━━━━━━━━━✪\n\n"
+                                                f"╭━⟮ ✦ ᴘʟᴀʏᴇʀ ɪɴꜰᴏ ✦ ⟯\n"
+                                                f"│👤 ɴᴀᴍᴇ: {name}\n"
+                                                f"│🆔 ᴜɪᴅ: {uid}\n"
+                                                f"│🌍 ʀᴇɢɪᴏɴ: {reg.upper()}\n"
+                                                f"╰━━━━━━━━━━━━━━━✪\n\n"
+                                                f"╭━⟮ ✦ ʟɪᴋᴇ ᴅᴇᴛᴀɪʟꜱ ✦ ⟯\n"
+                                                f"│👍 ʟɪᴋᴇs ʙᴇꜰᴏʀᴇ:  {before}\n"
+                                                f"│❤️ ʟɪᴋᴇs ᴀꜰᴛᴇʀ:    {after}\n"
+                                                f"│➕ ʟɪᴋᴇs ɢɪᴠᴇɴ:   {given}\n"
+                                                f"╰━━━━━━━━━━━━━━━✪"
+                                            )
+                                            # Send group message 
+                                            await application.bot.send_message(chat_id=GRP_ID, text=final_box)
+                        except Exception as inner_e:
+                            print(f"--> [AUTO LIKE API ERROR] UID {uid}: {inner_e}")
+                        
+                        await asyncio.sleep(5) # Thoda delay to avoid server spam
+                else:
+                    print("--> [AUTO LIKE] auto_uids.json not found!")
+            except Exception as e:
+                print(f"--> [AUTO LIKE ERROR] {e}")
+            
+            # Sleep for 61 seconds so it doesn't run twice inside 6:00 AM
+            await asyncio.sleep(61)
+        else:
+            # Check time every 30 seconds
+            await asyncio.sleep(30)
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # --- COMMAND HANDLERS ---
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -380,6 +458,9 @@ async def main_runner():
     application.add_handler(CommandHandler("start1490", start_auto))
     
     asyncio.create_task(auto_refresh_engine(application))
+    
+    # NEW: Start the Daily Auto Like engine in background
+    asyncio.create_task(daily_auto_like_engine(application))
     
     async with application:
         await application.initialize()
