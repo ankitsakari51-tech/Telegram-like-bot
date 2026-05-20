@@ -9,8 +9,8 @@ import json
 import time
 import logging
 import jwt  
-import re # Purane code se wapas add kiya link filtering ke liye
-import datetime # NEW: Added for Daily Auto Like Timer
+import re 
+import datetime 
 from flask import Flask
 from threading import Thread
 from github import Github
@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 # --- GLOBAL KILL SWITCH ---
 AUTO_UPDATE_ACTIVE = True
+LIMIT_FILE = "user_limits.json"
 
 app = Flask('')
 
@@ -61,6 +62,52 @@ def sc(t):
 async def is_admin(u):
     if not u: return False
     return str(u.id) == ADMIN_ID or u.username == "ankitraj444"
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# --- USER LIMIT PERSISTENT ENGINE (NEW) ---
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def load_user_limits():
+    """Loads user limits history from local user_limits.json"""
+    if os.path.exists(LIMIT_FILE):
+        try:
+            with open(LIMIT_FILE, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading limits: {e}")
+            return {}
+    return {}
+
+def save_user_limits(data):
+    """Saves user limits history to local user_limits.json"""
+    try:
+        with open(LIMIT_FILE, "w") as f:
+            json.dump(data, f, indent=4)
+    except Exception as e:
+        print(f"Error saving limits: {e}")
+
+def get_current_ist():
+    """Gets current Indian Standard Time (IST = UTC + 5:30)"""
+    utc_now = datetime.datetime.now(datetime.timezone.utc)
+    ist_offset = datetime.timedelta(hours=5, minutes=30)
+    return utc_now + ist_offset
+
+def get_current_cycle_start(dt_ist):
+    """Returns the start datetime of the current 4 AM - 4 AM IST daily cycle"""
+    if dt_ist.hour < 4:
+        # If before 4 AM IST, the current cycle started at 4:00 AM yesterday
+        cycle_date = (dt_ist - datetime.timedelta(days=1)).date()
+    else:
+        # If after 4 AM IST, the current cycle started at 4:00 AM today
+        cycle_date = dt_ist.date()
+    return datetime.datetime.combine(cycle_date, datetime.time(4, 0))
+
+def get_next_reset_time_ist(dt_ist):
+    """Returns the exact datetime of the upcoming 4:00 AM IST reset"""
+    if dt_ist.hour < 4:
+        return datetime.datetime.combine(dt_ist.date(), datetime.time(4, 0))
+    else:
+        return datetime.datetime.combine(dt_ist.date() + datetime.timedelta(days=1), datetime.time(4, 0))
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # --- PRIVATE ACCESS & ANTI-LINK LOGIC (RESTORED) ---
@@ -139,7 +186,7 @@ async def github_push(content, commit_msg):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def auto_refresh_engine(application):
     global AUTO_UPDATE_ACTIVE
-    print("-->[SYSTEM] Smart Background Auto-Refresh Engine Started (8 Min Cycle).")
+    print("--> [SYSTEM] Smart Background Auto-Refresh Engine Started (8 Min Cycle).")
     await asyncio.sleep(10) 
     
     while True:
@@ -155,13 +202,13 @@ async def auto_refresh_engine(application):
                 t_file = repo.get_contents("tokens.json")
                 tokens = json.loads(t_file.decoded_content.decode())
             except:
-                tokens =[]
+                tokens = []
 
             try:
                 u_file = repo.get_contents("uidpass.json")
                 u_data = json.loads(u_file.decoded_content.decode())
             except:
-                u_data =[]
+                u_data = []
 
             if len(tokens) != len(u_data):
                 tokens = [{"token": ""} for _ in range(len(u_data))]
@@ -218,7 +265,7 @@ async def auto_refresh_engine(application):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# --- DAILY AUTO LIKE ENGINE (NEW) ---
+# --- DAILY AUTO LIKE ENGINE ---
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def daily_auto_like_engine(application):
     print("--> [SYSTEM] Daily Auto Like Engine Started (Target: 06:00 AM IST).")
@@ -383,8 +430,62 @@ async def like_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
         return
     
     reg, uid = c.args[0].lower(), c.args[1]
-    wait_msg = await u.effective_chat.send_message("⌛ ᴘʀᴏᴄᴇssɪɴɢ...")
+    
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # --- SMART DAILY LIMIT RATE LIMITER (NEW) ---
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    is_user_admin = await is_admin(u.effective_user)
+    
+    if not is_user_admin:
+        user_id = str(u.effective_user.id)
+        now_ist = get_current_ist()
+        cycle_start = get_current_cycle_start(now_ist)
+        
+        limits_data = load_user_limits()
+        user_history = limits_data.get(user_id, [])
+        
+        # Keep only timestamps within the current 4 AM - 4 AM cycle
+        current_cycle_uses = []
+        for ts_str in user_history:
+            try:
+                ts_dt = datetime.datetime.fromisoformat(ts_str)
+                # Compare naive datetimes (since combine creates naive datetime)
+                if ts_dt >= cycle_start:
+                    current_cycle_uses.append(ts_str)
+            except Exception as parse_e:
+                pass
+        
+        # Verify usage count
+        if len(current_cycle_uses) >= 2:
+            next_reset = get_next_reset_time_ist(now_ist)
+            # Remove UTC / Timezone info for substracting naive datetime
+            time_to_wait = next_reset - now_ist.replace(tzinfo=None)
+            
+            total_seconds = int(time_to_wait.total_seconds())
+            hours = max(0, total_seconds // 3600)
+            minutes = max(0, (total_seconds % 3600) // 60)
+            
+            fancy_caller = sc(u.effective_user.first_name)
+            block_msg = (
+                f"🚫 **ʟɪᴍɪᴛ ʀᴇᴀᴄʜᴇᴅ / 🚨 Sᴇᴄᴜʀɪᴛʏ 🚨**\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"👋 ʜᴇʏ {fancy_caller},\n\n"
+                f"Aapne aaj ki **2 times limit** ko exhaust kar diya hai.\n"
+                f"Ab aap naya like sirf agle 4:00 AM IST reset ke baad hi le sakte hain.\n\n"
+                f"⏳ **ʀᴇɢᴇɴᴇʀᴀᴛɪᴏɴ ᴛɪᴍᴇ:** {hours}h {minutes}m baaki hai\n"
+                f"⏰ **ɴᴇxᴛ ʀᴇsᴇᴛ:** Daily at 04:00 AM IST\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━"
+            )
+            await u.effective_chat.send_message(block_msg)
+            return
 
+        # If not exceeded, record this usage and update JSON metadata
+        current_cycle_uses.append(now_ist.replace(tzinfo=None).isoformat())
+        limits_data[user_id] = current_cycle_uses
+        save_user_limits(limits_data)
+        
+    # Proceed with native like request handler
+    wait_msg = await u.effective_chat.send_message("⌛ ᴘʀᴏᴄᴇssɪɴɢ...")
     caller_name = sc(u.effective_user.first_name)
 
     try:
@@ -447,7 +548,6 @@ async def main_runner():
     application = ApplicationBuilder().token(B_TOKEN).build()
     
     # Priority 1: Private check and Anti-Link (Checks every message)
-    # This part was added from the old code as requested.
     application.add_handler(MessageHandler(filters.ALL, global_handler), group=-1)
     
     # Priority 2: Standard Commands
@@ -459,7 +559,7 @@ async def main_runner():
     
     asyncio.create_task(auto_refresh_engine(application))
     
-    # NEW: Start the Daily Auto Like engine in background
+    # Start the Daily Auto Like engine in background
     asyncio.create_task(daily_auto_like_engine(application))
     
     async with application:
