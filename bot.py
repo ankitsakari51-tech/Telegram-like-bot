@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 # --- GLOBAL KILL SWITCH ---
 AUTO_UPDATE_ACTIVE = True
 LIMIT_FILE = "user_limits.json"
+LOCK_FILE = "lock_state.json"
 
 app = Flask('')
 
@@ -64,7 +65,7 @@ async def is_admin(u):
     return str(u.id) == ADMIN_ID or u.username == "ankitraj444"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# --- USER LIMIT PERSISTENT ENGINE (NEW) ---
+# --- USER LIMIT PERSISTENT ENGINE ---
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def load_user_limits():
@@ -85,6 +86,46 @@ def save_user_limits(data):
             json.dump(data, f, indent=4)
     except Exception as e:
         print(f"Error saving limits: {e}")
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# --- NEW: SYSTEM LOCK ENGINE (/off) ---
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def load_lock_state():
+    """Loads locked state from local lock_state.json"""
+    if os.path.exists(LOCK_FILE):
+        try:
+            with open(LOCK_FILE, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading lock state: {e}")
+            return {"locked_until": None}
+    return {"locked_until": None}
+
+def save_lock_state(locked_until_iso):
+    """Saves locked state to local lock_state.json"""
+    try:
+        with open(LOCK_FILE, "w") as f:
+            json.dump({"locked_until": locked_until_iso}, f, indent=4)
+    except Exception as e:
+        print(f"Error saving lock state: {e}")
+
+def parse_duration(time_str):
+    """Parses time strings like '4h', '30m', '1d' and returns a timedelta. Returns None if invalid."""
+    match = re.match(r'^(\d+)\s*([a-zA-Z]+)$', time_str.strip())
+    if not match:
+        return None
+    amount = int(match.group(1))
+    unit = match.group(2).lower()
+    if unit in ['m', 'min', 'minute', 'minutes']:
+        return datetime.timedelta(minutes=amount)
+    elif unit in ['h', 'hr', 'hour', 'hours']:
+        return datetime.timedelta(hours=amount)
+    elif unit in ['d', 'day', 'days']:
+        return datetime.timedelta(days=amount)
+    elif unit in ['s', 'sec', 'second', 'seconds']:
+        return datetime.timedelta(seconds=amount)
+    return None
 
 def get_current_ist():
     """Gets current Indian Standard Time (IST = UTC + 5:30)"""
@@ -110,12 +151,19 @@ def get_next_reset_time_ist(dt_ist):
         return datetime.datetime.combine(dt_ist.date() + datetime.timedelta(days=1), datetime.time(4, 0))
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# --- PRIVATE ACCESS & ANTI-LINK LOGIC (RESTORED) ---
+# --- PRIVATE ACCESS & ANTI-LINK LOGIC ---
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 async def global_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
     """Handles anti-link in groups and private access control as per old code"""
     if not u.message: return
+
+    # Intercept to catch admin reply/text for /off lock time
+    if await is_admin(u.effective_user) and c.user_data.get("awaiting_lock_time"):
+        c.user_data["awaiting_lock_time"] = False
+        time_str = u.message.text.strip()
+        await process_lock_time(u, c, time_str)
+        return
 
     # 1. ANTI-LINK LOGIC (FOR GROUP)
     if u.effective_chat.id == GRP_ID:
@@ -313,7 +361,7 @@ async def daily_auto_like_engine(application):
                                                 f"╰━━━━━━━━━━━━━━━✪\n\n"
                                                 f"╭━⟮ ✦ ᴘʟᴀʏᴇʀ ɪɴꜰᴏ ✦ ⟯\n"
                                                 f"│👤 ɴᴀᴍᴇ: {name}\n"
-                                                f"│🆔 ᴜɪᴅ: {uid}\n"
+                                                f"│🆔 ᴜɪ─: {uid}\n"
                                                 f"│🌍 ʀᴇɢɪᴏɴ: {reg.upper()}\n"
                                                 f"╰━━━━━━━━━━━━━━━✪\n\n"
                                                 f"╭━⟮ ✦ ʟɪᴋᴇ ᴅᴇᴛᴀɪʟꜱ ✦ ⟯\n"
@@ -356,6 +404,7 @@ async def start_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
             "➥ /status - ᴄʜᴇᴄᴋ ᴛᴏᴋᴇɴs ʜᴇᴀʟᴛʜ\n"
             "➥ /stop1490 - ᴋɪʟʟ ᴀᴜᴛᴏ ᴜᴘᴅᴀᴛᴇ\n"
             "➥ /start1490 - ʀᴇsᴜᴍᴇ ᴀᴜᴛᴏ ᴜᴘᴅᴀᴛᴇ\n"
+            "➥ /off - ᴛᴇᴍᴘᴏʀᴀʀɪʟʏ ʟᴏᴄᴋ /ʟɪᴋᴇ\n"
             "━━━━━━━━━━━━━━━━━━━━"
         )
         await u.effective_chat.send_message(welcome_text)
@@ -422,6 +471,48 @@ async def start_auto(u: Update, c: ContextTypes.DEFAULT_TYPE):
     AUTO_UPDATE_ACTIVE = True
     await u.effective_chat.send_message("🟢 **RESUMED:** Auto-update loop is now ACTIVE.")
 
+async def off_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    """CMD handler for owner to temporarily lock the /like commands"""
+    if not await is_admin(u.effective_user): return
+    
+    # If the owner types "/off 4h" in one line
+    if c.args:
+        time_str = c.args[0]
+        await process_lock_time(u, c, time_str)
+        return
+        
+    # If the owner types only "/off" - prompt for duration
+    c.user_data["awaiting_lock_time"] = True
+    await u.effective_chat.send_message("Enter your time to open")
+
+async def process_lock_time(u: Update, c: ContextTypes.DEFAULT_TYPE, time_str: str):
+    """Calulates duration & broadcasts lock warnings dynamically"""
+    duration = parse_duration(time_str)
+    if not duration:
+        await u.effective_chat.send_message("❌ Invalid format! Please use format like: 4h, 30m, 1d")
+        return
+        
+    now_ist = get_current_ist()
+    locked_until_ist = now_ist + duration
+    
+    # Save lock state to persistent JSON
+    save_lock_state(locked_until_ist.replace(tzinfo=None).isoformat())
+    
+    # Format ending time dynamically (e.g., 07:00 PM -> 7PM, 07:30 PM -> 7:30PM)
+    raw_str = locked_until_ist.strftime("%I:%M %p").lstrip('0').replace(" ", "")
+    if ":00" in raw_str:
+        raw_str = raw_str.replace(":00", "")
+    end_time_str = raw_str
+    
+    await u.effective_chat.send_message("✅ Done")
+    
+    # Broadcast to public group GRP_ID
+    group_msg = f"⚠️ Ab sab /like command {end_time_str} me use kar paoge."
+    try:
+        await c.bot.send_message(chat_id=GRP_ID, text=group_msg)
+    except Exception as e:
+        print(f"Error broadcasting to group GRP_ID: {e}")
+
 async def like_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if not (u.effective_chat.id == GRP_ID or await is_admin(u.effective_user)): return
     
@@ -431,12 +522,34 @@ async def like_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
     
     reg, uid = c.args[0].lower(), c.args[1]
     
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # --- SMART DAILY LIMIT RATE LIMITER (NEW) ---
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     is_user_admin = await is_admin(u.effective_user)
     
     if not is_user_admin:
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # --- NEW: GLOBAL LOCK VERIFICATION ---
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        lock_state = load_lock_state()
+        locked_until_str = lock_state.get("locked_until")
+        if locked_until_str:
+            try:
+                locked_until_dt = datetime.datetime.fromisoformat(locked_until_str)
+                now_ist_naive = get_current_ist().replace(tzinfo=None)
+                if now_ist_naive < locked_until_dt:
+                    # Formatting dynamic lock release time format
+                    raw_str = locked_until_dt.strftime("%I:%M %p").lstrip('0').replace(" ", "")
+                    if ":00" in raw_str:
+                        raw_str = raw_str.replace(":00", "")
+                    end_time_str = raw_str
+                    
+                    lock_msg = f"❌ /like command locked hai. Aap ise {end_time_str} se use kar paoge."
+                    await u.effective_chat.send_message(lock_msg)
+                    return
+            except Exception as e:
+                print(f"Error checking lock state: {e}")
+
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # --- SMART DAILY LIMIT RATE LIMITER ---
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         user_id = str(u.effective_user.id)
         now_ist = get_current_ist()
         cycle_start = get_current_cycle_start(now_ist)
@@ -556,6 +669,7 @@ async def main_runner():
     application.add_handler(CommandHandler("status", status_cmd))
     application.add_handler(CommandHandler("stop1490", stop_auto))
     application.add_handler(CommandHandler("start1490", start_auto))
+    application.add_handler(CommandHandler("off", off_cmd))
     
     asyncio.create_task(auto_refresh_engine(application))
     
