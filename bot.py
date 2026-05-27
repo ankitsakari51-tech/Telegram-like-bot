@@ -87,10 +87,6 @@ def save_user_limits(data):
     except Exception as e:
         print(f"Error saving limits: {e}")
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# --- NEW: SYSTEM LOCK ENGINE (/off) ---
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 def load_lock_state():
     """Loads locked state from local lock_state.json"""
     if os.path.exists(LOCK_FILE):
@@ -158,7 +154,7 @@ async def global_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
     """Handles anti-link in groups and private access control as per old code"""
     if not u.message: return
 
-    # Intercept to catch admin reply/text for /off lock time
+    # Intercept to catch admin reply for /off lock time
     if await is_admin(u.effective_user) and c.user_data.get("awaiting_lock_time"):
         c.user_data["awaiting_lock_time"] = False
         time_str = u.message.text.strip()
@@ -353,15 +349,15 @@ async def daily_auto_like_engine(application):
                                                 given = f"+{given_by_api}"
                                                 msg_header = "ꜱᴜᴄᴄᴇssꜰᴜʟʟʏ ʟɪᴋᴇ ꜱᴇɴᴛ"
 
-                                            final_box = (
-                                                f" 🤖 ᴀᴜᴛᴏ ᴅᴀɪʟʏ ʟɪᴋᴇ 🤖 !!\n"
+                                             final_box = (
+                                                f"ㅤㅤㅤ!! 🤖 ᴀᴜᴛᴏ ᴅᴀɪʟʏ ʟɪᴋᴇ 🤖 !!\n"
                                                 f"✪━━━━━━━━━━━━━━━✪\n"
                                                 f"╭💝\n"
                                                 f"│{msg_header}\n"
                                                 f"╰━━━━━━━━━━━━━━━✪\n\n"
                                                 f"╭━⟮ ✦ ᴘʟᴀʏᴇʀ ɪɴꜰᴏ ✦ ⟯\n"
                                                 f"│👤 ɴᴀᴍᴇ: {name}\n"
-                                                f"│🆔 ᴜɪ─: {uid}\n"
+                                                f"│🆔 ᴜɪᴅ: {uid}\n"
                                                 f"│🌍 ʀᴇɢɪᴏɴ: {reg.upper()}\n"
                                                 f"╰━━━━━━━━━━━━━━━✪\n\n"
                                                 f"╭━⟮ ✦ ʟɪᴋᴇ ᴅᴇᴛᴀɪʟꜱ ✦ ⟯\n"
@@ -369,22 +365,20 @@ async def daily_auto_like_engine(application):
                                                 f"│❤️ ʟɪᴋᴇs ᴀꜰᴛᴇʀ:    {after}\n"
                                                 f"│➕ ʟɪᴋᴇs ɢɪᴠᴇɴ:   {given}\n"
                                                 f"╰━━━━━━━━━━━━━━━✪"
-                                            )
-                                            # Send group message 
-                                            await application.bot.send_message(chat_id=GRP_ID, text=final_box)
+                                             )
+                                             # Send group message 
+                                             await application.bot.send_message(chat_id=GRP_ID, text=final_box)
                         except Exception as inner_e:
                             print(f"--> [AUTO LIKE API ERROR] UID {uid}: {inner_e}")
                         
-                        await asyncio.sleep(5) # Thoda delay to avoid server spam
+                        await asyncio.sleep(5) 
                 else:
                     print("--> [AUTO LIKE] auto_uids.json not found!")
             except Exception as e:
                 print(f"--> [AUTO LIKE ERROR] {e}")
             
-            # Sleep for 61 seconds so it doesn't run twice inside 6:00 AM
             await asyncio.sleep(61)
         else:
-            # Check time every 30 seconds
             await asyncio.sleep(30)
 
 
@@ -404,7 +398,6 @@ async def start_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
             "➥ /status - ᴄʜᴇᴄᴋ ᴛᴏᴋᴇɴs ʜᴇᴀʟᴛʜ\n"
             "➥ /stop1490 - ᴋɪʟʟ ᴀᴜᴛᴏ ᴜᴘᴅᴀᴛᴇ\n"
             "➥ /start1490 - ʀᴇsᴜᴍᴇ ᴀᴜᴛᴏ ᴜᴘᴅᴀᴛᴇ\n"
-            "➥ /off - ᴛᴇᴍᴘᴏʀᴀʀɪʟʏ ʟᴏᴄᴋ /ʟɪᴋᴇ\n"
             "━━━━━━━━━━━━━━━━━━━━"
         )
         await u.effective_chat.send_message(welcome_text)
@@ -472,21 +465,17 @@ async def start_auto(u: Update, c: ContextTypes.DEFAULT_TYPE):
     await u.effective_chat.send_message("🟢 **RESUMED:** Auto-update loop is now ACTIVE.")
 
 async def off_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
-    """CMD handler for owner to temporarily lock the /like commands"""
     if not await is_admin(u.effective_user): return
     
-    # If the owner types "/off 4h" in one line
     if c.args:
         time_str = c.args[0]
         await process_lock_time(u, c, time_str)
         return
         
-    # If the owner types only "/off" - prompt for duration
     c.user_data["awaiting_lock_time"] = True
     await u.effective_chat.send_message("Enter your time to open")
 
 async def process_lock_time(u: Update, c: ContextTypes.DEFAULT_TYPE, time_str: str):
-    """Calulates duration & broadcasts lock warnings dynamically"""
     duration = parse_duration(time_str)
     if not duration:
         await u.effective_chat.send_message("❌ Invalid format! Please use format like: 4h, 30m, 1d")
@@ -506,7 +495,7 @@ async def process_lock_time(u: Update, c: ContextTypes.DEFAULT_TYPE, time_str: s
     
     await u.effective_chat.send_message("✅ Done")
     
-    # Broadcast to public group GRP_ID
+    # Broadcast to group
     group_msg = f"⚠️ Ab sab /like command {end_time_str} me use kar paoge."
     try:
         await c.bot.send_message(chat_id=GRP_ID, text=group_msg)
@@ -522,12 +511,14 @@ async def like_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
     
     reg, uid = c.args[0].lower(), c.args[1]
     
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # --- SMART DAILY LIMIT RATE LIMITER ---
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     is_user_admin = await is_admin(u.effective_user)
+    limit_display = "Admin"
     
     if not is_user_admin:
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # --- NEW: GLOBAL LOCK VERIFICATION ---
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # Check global /off lock state
         lock_state = load_lock_state()
         locked_until_str = lock_state.get("locked_until")
         if locked_until_str:
@@ -535,7 +526,7 @@ async def like_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
                 locked_until_dt = datetime.datetime.fromisoformat(locked_until_str)
                 now_ist_naive = get_current_ist().replace(tzinfo=None)
                 if now_ist_naive < locked_until_dt:
-                    # Formatting dynamic lock release time format
+                    # Parse dynamic lock release time
                     raw_str = locked_until_dt.strftime("%I:%M %p").lstrip('0').replace(" ", "")
                     if ":00" in raw_str:
                         raw_str = raw_str.replace(":00", "")
@@ -545,13 +536,47 @@ async def like_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
                     await u.effective_chat.send_message(lock_msg)
                     return
             except Exception as e:
-                print(f"Error checking lock state: {e}")
+                print(f"Error checking lock state in like_cmd: {e}")
 
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # --- SMART DAILY LIMIT RATE LIMITER ---
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        user_id = str(u.effective_user.id)
+        # Check 9 AM - 11 AM IST daily window
         now_ist = get_current_ist()
+        current_time = now_ist.time()
+        allowed_start = datetime.time(9, 0)
+        allowed_end = datetime.time(11, 0)
+        if not (allowed_start <= current_time <= allowed_end):
+            time_msg = (
+                "माफ़ करें।\n"
+                "डेली सुबह 9 बजे से लेकर दोपहर 11 बजे के अंदर ही लाइक ले पाओगे। \n"
+                "You will be able to get likes only between 9 am to 11 am daily."
+            )
+            # Check for local voice file (Method A) or remote voice URL (Method B)
+            voice_sent = False
+            local_found = None
+            for ext in ["ogg", "mp3", "wav", "m4a"]:
+                if os.path.exists(f"warning.{ext}"):
+                    local_found = f"warning.{ext}"
+                    break
+            
+            if local_found:
+                try:
+                    with open(local_found, "rb") as f:
+                        await u.effective_chat.send_voice(voice=f, caption=time_msg)
+                        voice_sent = True
+                except Exception as e:
+                    print(f"Error sending local warning voice: {e}")
+            
+            if not voice_sent and os.environ.get("VOICE_URL"):
+                try:
+                    await u.effective_chat.send_voice(voice=os.environ.get("VOICE_URL"), caption=time_msg)
+                    voice_sent = True
+                except Exception as e:
+                    print(f"Error sending remote VOICE_URL: {e}")
+
+            if not voice_sent:
+                await u.effective_chat.send_message(time_msg)
+            return
+
+        user_id = str(u.effective_user.id)
         cycle_start = get_current_cycle_start(now_ist)
         
         limits_data = load_user_limits()
@@ -562,16 +587,14 @@ async def like_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
         for ts_str in user_history:
             try:
                 ts_dt = datetime.datetime.fromisoformat(ts_str)
-                # Compare naive datetimes (since combine creates naive datetime)
                 if ts_dt >= cycle_start:
                     current_cycle_uses.append(ts_str)
-            except Exception as parse_e:
+            except:
                 pass
         
         # Verify usage count
         if len(current_cycle_uses) >= 2:
             next_reset = get_next_reset_time_ist(now_ist)
-            # Remove UTC / Timezone info for substracting naive datetime
             time_to_wait = next_reset - now_ist.replace(tzinfo=None)
             
             total_seconds = int(time_to_wait.total_seconds())
@@ -596,6 +619,7 @@ async def like_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
         current_cycle_uses.append(now_ist.replace(tzinfo=None).isoformat())
         limits_data[user_id] = current_cycle_uses
         save_user_limits(limits_data)
+        limit_display = f"{len(current_cycle_uses)}/2"
         
     # Proceed with native like request handler
     wait_msg = await u.effective_chat.send_message("⌛ ᴘʀᴏᴄᴇssɪɴɢ...")
@@ -631,7 +655,7 @@ async def like_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
             msg_header = "ꜱᴜᴄᴄᴇssꜰᴜʟʟʏ ʟɪᴋᴇ ꜱᴇɴᴛ"
 
         final_box = (
-            f"ㅤ!! ʜᴇʏ {caller_name.upper()} !!\n"
+            f"ㅤㅤㅤ!! ʜᴇʏ {caller_name.upper()} !!\n"
             f"✪━━━━━━━━━━━━━━━✪\n"
             f"╭💝\n"
             f"│{msg_header}\n"
@@ -645,7 +669,8 @@ async def like_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
             f"│👍 ʟɪᴋᴇs ʙᴇꜰᴏʀᴇ:  {before}\n"
             f"│❤️ ʟɪᴋᴇs ᴀꜰᴛᴇʀ:    {after}\n"
             f"│➕ ʟɪᴋᴇs ɢɪᴠᴇɴ:   {given}\n"
-            f"╰━━━━━━━━━━━━━━━✪"
+            f"╰━━━━━━━━━━━━━━━✪\n"
+            f" Limit: {limit_display}"
         )
         await wait_msg.edit_text(final_box)
 
