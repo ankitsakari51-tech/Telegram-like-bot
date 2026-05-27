@@ -354,7 +354,7 @@ async def daily_auto_like_engine(application):
                                                 msg_header = "ꜱᴜᴄᴄᴇssꜰᴜʟʟʏ ʟɪᴋᴇ ꜱᴇɴᴛ"
 
                                             final_box = (
-                                                f"ㅤㅤㅤ!! 🤖 ᴀᴜᴛᴏ ᴅᴀɪʟʏ ʟɪᴋᴇ 🤖 !!\n"
+                                                f" 🤖 ᴀᴜᴛᴏ ᴅᴀɪʟʏ ʟɪᴋᴇ 🤖 !!\n"
                                                 f"✪━━━━━━━━━━━━━━━✪\n"
                                                 f"╭💝\n"
                                                 f"│{msg_header}\n"
@@ -631,7 +631,7 @@ async def like_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
             msg_header = "ꜱᴜᴄᴄᴇssꜰᴜʟʟʏ ʟɪᴋᴇ ꜱᴇɴᴛ"
 
         final_box = (
-            f"ㅤㅤㅤ!! ʜᴇʏ {caller_name.upper()} !!\n"
+            f"ㅤ!! ʜᴇʏ {caller_name.upper()} !!\n"
             f"✪━━━━━━━━━━━━━━━✪\n"
             f"╭💝\n"
             f"│{msg_header}\n"
