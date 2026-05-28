@@ -15,7 +15,7 @@ from flask import Flask
 from threading import Thread
 from github import Github
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters, ApplicationHandlerStop
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -113,7 +113,7 @@ def save_lock_state(locked_until_iso):
         print(f"Error saving lock state: {e}")
 
 def parse_duration(time_str):
-    """Parses time strings like '4h', '30m', '1d' and returns a timedelta."""
+    """Parses time strings like '4h', '30m', '1d' and returns a timedelta. Returns None if invalid."""
     match = re.match(r'^(\d+)\s*([a-zA-Z]+)$', time_str.strip())
     if not match:
         return None
@@ -138,8 +138,10 @@ def get_current_ist():
 def get_current_cycle_start(dt_ist):
     """Returns the start datetime of the current 4 AM - 4 AM IST daily cycle"""
     if dt_ist.hour < 4:
+        # If before 4 AM IST, the current cycle started at 4:00 AM yesterday
         cycle_date = (dt_ist - datetime.timedelta(days=1)).date()
     else:
+        # If after 4 AM IST, the current cycle started at 4:00 AM today
         cycle_date = dt_ist.date()
     return datetime.datetime.combine(cycle_date, datetime.time(4, 0))
 
@@ -151,7 +153,7 @@ def get_next_reset_time_ist(dt_ist):
         return datetime.datetime.combine(dt_ist.date() + datetime.timedelta(days=1), datetime.time(4, 0))
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# --- GLOBAL CHAT & STATE MANAGEMENT ---
+# --- PRIVATE ACCESS & ANTI-LINK LOGIC ---
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 async def global_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
@@ -160,7 +162,51 @@ async def global_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
     user_id = u.effective_user.id
     chat_id = u.effective_chat.id
+    chat_type = u.effective_chat.type
     text = u.message.text.strip() if u.message and u.message.text else ""
+
+    is_user_admin = await is_admin(u.effective_user)
+    is_official_group = (chat_id == GRP_ID)
+
+    # 1. GROUP RESTRICTION: Bot should only work in owner's official group (GRP_ID)
+    if chat_type in ("group", "supergroup"):
+        if not is_official_group:
+            # Drop update completely and stop handling subsequent handlers in group 0
+            raise ApplicationHandlerStop()
+        
+        # If it's official group, we run the anti-link logic for non-admins
+        if not is_user_admin:
+            text_for_link = u.message.text or u.message.caption or ""
+            urls = re.findall(r'(https?://\S+|t\.me/\S+|www\.\S+)', text_for_link)
+            if urls:
+                try:
+                    await u.message.delete()
+                    raise ApplicationHandlerStop() # Stop handling this message
+                except Exception as e:
+                    print(f"Error deleting link: {e}")
+
+    # 2. PRIVATE CHAT (DM) RESTRICTION: Show block message with buttons to non-admins
+    elif chat_type == "private":
+        if not is_user_admin:
+            # Show "Bot is private, use only in official group" message
+            block_markup = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("ᴅᴍ ᴏᴡɴᴇʀ", url="https://t.me/ankitraj444"),
+                    InlineKeyboardButton("ʟɪᴋᴇ ɢʀᴏᴜᴘ", url="https://t.me/ankitraj4444")
+                ]
+            ])
+            block_text = (
+                "🔒 **ʙᴏᴛ ɪꜱ ᴘʀɪᴠᴀᴛᴇ** 🔒\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "⚠️ **ᴜꜱᴇ ᴏɴʟʏ ᴏꜰꜰɪᴄɪᴀʟ ɢʀᴏᴜᴘ**\n\n"
+                "यह बोट केवल ऑफिशियल ग्रुप में ही काम करेगा। अगर आपको लाइक चाहिए तो नीचे दिए गए बटन पर क्लिक करके ऑफिशियल ग्रुप ज्वाइन करें।\n"
+                "━━━━━━━━━━━━━━━━━━━━"
+            )
+            try:
+                await u.message.reply_text(block_text, reply_markup=block_markup)
+            except Exception as e:
+                print(f"Error sending private block message: {e}")
+            raise ApplicationHandlerStop()
 
     # Check custom user state in chat_data
     active_custom = c.chat_data.get("active_custom")
@@ -258,19 +304,6 @@ async def global_handler(u: Update, c: ContextTypes.DEFAULT_TYPE):
         await process_lock_time(u, c, time_str)
         return
 
-    # 1. ANTI-LINK LOGIC (FOR GROUP)
-    if u.effective_chat.id == GRP_ID:
-        if not await is_admin(u.effective_user):
-            # Check for links in text or caption using regex
-            text = u.message.text or u.message.caption or ""
-            urls = re.findall(r'(https?://\S+|t\.me/\S+|www\.\S+)', text)
-            if urls:
-                try:
-                    await u.message.delete()
-                    return # Stop processing this specific update
-                except Exception as e:
-                    print(f"Error deleting link: {e}")
-
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # --- SMART TOKEN VERIFIER ---
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -326,6 +359,7 @@ async def auto_refresh_engine(application):
             now_ist = get_current_ist()
             today_date_str = now_ist.date().isoformat()
             
+            # Read last update state from local JSON to persist across restarts
             last_update_date = None
             if os.path.exists("guest_last_update.json"):
                 try:
@@ -335,6 +369,7 @@ async def auto_refresh_engine(application):
                 except:
                     pass
             
+            # Run if it's 8:00 AM IST or after, and we haven't processed today yet
             if now_ist.hour >= 8 and last_update_date != today_date_str:
                 print("--> [GUEST AUTO] Triggering daily 8:00 AM Guest.json token generation...")
                 g_temp = Github(G_TOKEN)
@@ -380,6 +415,7 @@ async def auto_refresh_engine(application):
                             except Exception as fs_e:
                                 print(f"--> [GUEST AUTO] Error saving state: {fs_e}")
                             
+                            # Exact telegram alert message requested by user
                             bot_msg = f"guest file se id pass lekar {updated_guest_count} token update huaa"
                             
                             try:
@@ -402,6 +438,7 @@ async def auto_refresh_engine(application):
             g = Github(G_TOKEN)
             repo = g.get_repo(REPO_NAME)
             
+            # Determine if we should use guest.json checking (only before 11:00 AM IST if updated today)
             now_ist = get_current_ist()
             today_date_str = now_ist.date().isoformat()
             has_guest_updated_today = False
@@ -498,7 +535,11 @@ async def auto_refresh_engine(application):
 
 
 def add_or_update_auto_like(user_id, uid, region, day, added_by_admin=False):
-    """Adds or updates user auto likes target queue"""
+    """Adds a new target to auto_uids.json.
+    Regular users are limited to exactly 1 active auto-like entry.
+    Admin can have unlimited entries.
+    Returns: (idx, auto_time_str, day)
+    """
     targets = []
     if os.path.exists("auto_uids.json"):
         try:
@@ -508,6 +549,7 @@ def add_or_update_auto_like(user_id, uid, region, day, added_by_admin=False):
             print(f"Error reading auto_uids.json: {e}")
             targets = []
 
+    # Find and remove previous regular user entry if not added_by_admin
     if not added_by_admin:
         updated_targets = []
         for t in targets:
@@ -515,26 +557,33 @@ def add_or_update_auto_like(user_id, uid, region, day, added_by_admin=False):
                 updated_targets.append(t)
         targets = updated_targets
 
+    # Create new entry
     new_entry = {
-        "uid": str(uid).strip(),
-        "region": str(region).strip().lower(),
-        "day": int(day),
-        "user_id": str(user_id),
-        "added_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+         "uid": str(uid).strip(),
+         "region": str(region).strip().lower(),
+         "day": int(day),
+         "user_id": str(user_id),
+         "added_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
     }
     targets.append(new_entry)
 
+    # Save to file
     try:
         with open("auto_uids.json", "w") as f:
             json.dump(targets, f, indent=4)
     except Exception as e:
         print(f"Error writing to auto_uids.json: {e}")
 
+    # Index in current queue is len(targets) - 1
     idx = len(targets) - 1
+    
+    # Calculate auto_time: starting 09:00 AM IST + idx minutes
     start_hour = 9
     total_minutes = idx
     target_hour = start_hour + (total_minutes // 60)
     target_minute = total_minutes % 60
+    
+    # Format time string prefix (e.g. 09:02 AM)
     am_pm = "AM" if target_hour < 12 else "PM"
     display_hour = target_hour % 12
     if display_hour == 0:
@@ -550,9 +599,11 @@ def add_or_update_auto_like(user_id, uid, region, day, added_by_admin=False):
 async def daily_auto_like_engine(application):
     print("--> [SYSTEM] Daily Auto Like Engine Started (Target: 09:00 AM IST).")
     while True:
+        # Get Current IST Time (UTC + 5:30)
         now_utc = datetime.datetime.utcnow()
         now_ist = now_utc + datetime.timedelta(hours=5, minutes=30)
         
+        # Check if time is exactly 09:00 AM
         if now_ist.hour == 9 and now_ist.minute == 0:
             print("--> [AUTO LIKE] Time is 09:00 AM IST. Running daily likes in queue...")
             try:
@@ -561,6 +612,7 @@ async def daily_auto_like_engine(application):
                         targets = json.load(f)
                     
                     if targets:
+                        # Process targets one-by-one with 60 seconds delay
                         for idx, target in enumerate(targets):
                             reg = target.get("region", "ind").lower()
                             uid = target.get("uid")
@@ -583,7 +635,7 @@ async def daily_auto_like_engine(application):
                                                     msg_header = "ʟɪᴍɪᴛ ʀᴇᴀᴄʜᴇᴅ/ᴀʟʀᴇᴀᴅʏ ʟɪᴋᴇᴅ"
                                                 else:
                                                     given = f"+{given_by_api}"
-                                                    msg_header = "<span>ꜱᴜᴄᴄᴇssꜰᴜʟʟʏ ʟɪᴋᴇ ꜱᴇɴᴛ</span>"
+                                                    msg_header = "</span>ꜱᴜᴄᴄᴇssꜰᴜʟʟʏ ʟɪᴋᴇ ꜱᴇɴᴛ"
 
                                                 final_box = (
                                                     f"ㅤㅤㅤ!! 🤖 ᴀᴜᴛᴏ ᴅᴀɪʟʏ ʟɪᴋᴇ 🤖 !!\n"
@@ -602,32 +654,38 @@ async def daily_auto_like_engine(application):
                                                     f"│➕ ʟɪᴋᴇs ɢɪᴠᴇɴ:   {given}\n"
                                                     f"╰━━━━━━━━━━━━━━━✪"
                                                 )
+                                                # Send group message 
                                                 await application.bot.send_message(chat_id=GRP_ID, text=final_box)
                             except Exception as inner_e:
                                 print(f"--> [AUTO LIKE API ERROR] UID {uid}: {inner_e}")
                             
+                            # Decrement day
                             day_left = target.get("day", 1) - 1
                             target["day"] = day_left
                             
+                            # Save state at each step to prevent losing day decrement
                             try:
                                 with open("auto_uids.json", "w") as f_save:
                                     json.dump(targets, f_save, indent=4)
                             except Exception as save_err:
                                 print(f"Error saving updated auto target: {save_err}")
                             
+                            # Wait 1 minute before next auto like as requested
                             await asyncio.sleep(60)
 
+                        # Once done, keep only daily targets with days remaining (day_left > 0)
                         remaining_targets = [t for t in targets if t.get("day", 0) > 0]
                         try:
                             with open("auto_uids.json", "w") as f_cleanup:
                                 json.dump(remaining_targets, f_cleanup, indent=4)
                         except Exception as wrap_err:
-                             print(f"Error cleaning up auto targets: {wrap_err}")
+                            print(f"Error cleaning up auto targets: {wrap_err}")
                 else:
                     print("--> [AUTO LIKE] auto_uids.json not found!")
             except Exception as e:
                 print(f"--> [AUTO LIKE ERROR] {e}")
             
+            # Sleep for 61 seconds so 9:00 AM check won't run again
             await asyncio.sleep(61)
         else:
             await asyncio.sleep(30)
@@ -734,8 +792,10 @@ async def process_lock_time(u: Update, c: ContextTypes.DEFAULT_TYPE, time_str: s
     now_ist = get_current_ist()
     locked_until_ist = now_ist + duration
     
+    # Save lock state to persistent JSON
     save_lock_state(locked_until_ist.replace(tzinfo=None).isoformat())
     
+    # Format ending time dynamically (e.g., 07:00 PM -> 7PM, 07:30 PM -> 7:30PM)
     raw_str = locked_until_ist.strftime("%I:%M %p").lstrip('0').replace(" ", "")
     if ":00" in raw_str:
         raw_str = raw_str.replace(":00", "")
@@ -743,6 +803,7 @@ async def process_lock_time(u: Update, c: ContextTypes.DEFAULT_TYPE, time_str: s
     
     await u.effective_chat.send_message("✅ Done")
     
+    # Broadcast to group
     group_msg = f"⚠️ Ab sab /like command {end_time_str} me use kar paoge."
     try:
         await c.bot.send_message(chat_id=GRP_ID, text=group_msg)
@@ -970,7 +1031,7 @@ async def main_runner():
     
     if not B_TOKEN:
         print("--> [CRITICAL ERROR] BOT_TOKEN environment variable is not set! Bot cannot start.")
-        print("--> [SYSTEM] Keeping Flask server alive so you can set BOT_TOKEN.")
+        print("--> [SYSTEM] Keeping Flask server alive so you can set BOT_TOKEN in your Render dashboard under Environment Variables.")
         while True:
             await asyncio.sleep(3600)
             
@@ -991,6 +1052,8 @@ async def main_runner():
         application.add_handler(CommandHandler("off", off_cmd))
         
         asyncio.create_task(auto_refresh_engine(application))
+        
+        # Start the Daily Auto Like engine in background
         asyncio.create_task(daily_auto_like_engine(application))
         
         async with application:
@@ -1006,6 +1069,7 @@ async def main_runner():
             await asyncio.Event().wait()
     except Exception as e:
         print(f"--> [CRITICAL ERROR] Bot failed to start: {e}")
+        print("--> [SYSTEM] Keeping Flask server alive so you can update configuration.")
         while True:
             await asyncio.sleep(3600)
 
