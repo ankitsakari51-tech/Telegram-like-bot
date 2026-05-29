@@ -457,7 +457,6 @@ async def auto_refresh_engine(application):
                                                 tokens[idx] = {"token": token_val}
                                                 updated_guest_count += 1
                                                 test_needs_push = True
-                                enemy_err = None
                                 except Exception as inner_err:
                                     print(f"--> [GUEST AUTO] Error fetching token for {uid}: {inner_err}")
                 
